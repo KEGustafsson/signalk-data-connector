@@ -1,0 +1,22 @@
+{
+  "name": "signalk-data-connector",
+  "version": "0.0.1",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "signalk-node-server-plugin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KEGustafsson/signalk-data-connector.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "homepage": "https://github.com/KEGustafsson/signalk-data-connector#readme",
+  "dependencies": {
+    "ping-monitor": "^0.6.2"
+  }
+}

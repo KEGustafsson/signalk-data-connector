@@ -1,0 +1,10 @@
+{
+  "context": "vessels.*",
+  "subscribe": [
+    {
+      "path": "*",
+      "policy": "instant",
+      "minPeriod": 50
+    }
+  ]
+}
