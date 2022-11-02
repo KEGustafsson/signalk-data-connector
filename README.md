@@ -25,10 +25,10 @@ Client:
 - collected JSON data is compressed with Brottli
 - compressed package is encrypted with AES-256
 - encrypted compressed package is once more time compressed with Brottli
-- package is send over UDP to server
+- package is sent over UDP to server
 
 Server:
-- package is reveived in server
+- package is received in server
 - Brottli decompression
 - decryption
 - Brottli decompression
