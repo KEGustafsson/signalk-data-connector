@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 const fs = require('fs');
 const path = require('path');
 const zlib = require("zlib");
@@ -28,6 +29,7 @@ module.exports = function createPlugin(app) {
   let name;
   let callsign;
 
+  // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
 
   plugin.start = function (options) {
@@ -36,30 +38,8 @@ module.exports = function createPlugin(app) {
       app.debug('SignalK data connector server started');
       socketUdp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
       socketUdp.bind(options.udpPort);
-      socketUdp.on('message', (msg) => {
-        zlib.brotliDecompress(msg, (err, msg) => {
-          if (err) {
-            console.error('An error occurred:', err);
-            process.exitCode = 1;
-          }
-          msg = msg.toString('utf8');
-          msg = JSON.parse(msg);
-          msgHash = decrypt(msg, options.secretKey);
-          zlib.brotliDecompress(Buffer.from(JSON.parse(msgHash)), (err, msg) => {
-            if (err) {
-              console.error('An error occurred:', err);
-              process.exitCode = 1;
-            }      
-            msg = JSON.parse(msg.toString());
-            const jsonContent = JSON.parse(JSON.stringify(msg));
-            const numbers = Object.keys(jsonContent).length;
-            for (i = 0; i < numbers; i++) {
-              const jsonKey = Object.keys(jsonContent)[i];
-              const msg = jsonContent[jsonKey];
-              app.handleMessage('test', msg);
-            }
-          })  
-        });
+      socketUdp.on('message', (delta) => {
+        unpackDecrypt(delta, options.secretKey);
       });
     } else {
       // Client section
@@ -108,10 +88,11 @@ module.exports = function createPlugin(app) {
   
       socketUdp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
   
+      // eslint-disable-next-line no-inner-declarations
       function deltaTimerfunc() { deltaTimer = setTimeout(() => {
         timer = true;
         deltaTimer.refresh();
-      }, deltaTimerTime)};
+      }, deltaTimerTime)}
   
       deltaTimerfunc();
   
@@ -148,6 +129,7 @@ module.exports = function createPlugin(app) {
                 deltas.push(delta);
                 if (timer) {
                   packCrypt(deltas, options.secretKey, options.udpAddress, options.udpPort);
+                  app.debug(JSON.stringify(deltas, null, 2));
                   deltas = [];
                   timer = false;
                 }
@@ -164,7 +146,7 @@ module.exports = function createPlugin(app) {
           interval: options.pingIntervalTime // minutes
       });
   
-      myMonitor.on('up', function (res, state) {
+      myMonitor.on('up', function () {
         readyToSend = true;
         pingTimeout.refresh();
       });    
@@ -178,24 +160,45 @@ module.exports = function createPlugin(app) {
 
   // Based on testing, Compression -> Encryption -> Compression was the most efficient way to reduce size 
   function packCrypt(delta, secretKey, udpAddress, udpPort) {
-    delta = Buffer.from(JSON.stringify(delta), 'utf8')
-    zlib.brotliCompress(delta, (err, buffer) => {
+    zlib.brotliCompress(Buffer.from(JSON.stringify(delta), 'utf8'), (err, delta) => {
       if (err) {
         console.error('An error occurred:', err);
         process.exitCode = 1;
       }
-      const hash = encrypt(Buffer.from(JSON.stringify(buffer), 'utf8'), secretKey); {
-        let buffer = Buffer.from(JSON.stringify(hash), 'utf8')
-        zlib.brotliCompress(buffer, (err, buffer) => {
-          if (err) {
-            console.error('An error occurred:', err);
-            process.exitCode = 1;
-          }
-          if (buffer) {
-            udpSend(buffer, udpAddress, udpPort);
-          }
-        });
-      };
+      delta = encrypt(Buffer.from(JSON.stringify(delta), 'utf8'), secretKey);
+      zlib.brotliCompress(Buffer.from(JSON.stringify(delta), 'utf8'), (err, delta) => {
+        if (err) {
+          console.error('An error occurred:', err);
+          process.exitCode = 1;
+        }
+        if (delta) {
+          udpSend(delta, udpAddress, udpPort);
+        }
+      });
+    });
+  }
+
+  function unpackDecrypt (delta, secretKey) {
+    zlib.brotliDecompress(delta, (err, delta) => {
+      if (err) {
+        console.error('An error occurred:', err);
+        process.exitCode = 1;
+      }
+      delta = decrypt(JSON.parse(delta.toString('utf8')), secretKey);
+      zlib.brotliDecompress(Buffer.from(JSON.parse(delta)), (err, delta) => {
+        if (err) {
+          console.error('An error occurred:', err);
+          process.exitCode = 1;
+        }
+        const jsonContent = JSON.parse(JSON.stringify(JSON.parse(delta.toString())));
+        const numbers = Object.keys(jsonContent).length;
+        for (let i = 0; i < numbers; i++) {
+          const jsonKey = Object.keys(jsonContent)[i];
+          const delta = jsonContent[jsonKey];
+          app.handleMessage('', delta);
+          app.debug(JSON.stringify(delta, null, 2));
+        }
+      })  
     });
   }
 
