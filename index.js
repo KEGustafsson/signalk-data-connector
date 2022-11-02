@@ -9,8 +9,8 @@ const Monitor = require('ping-monitor');
 module.exports = function createPlugin(app) {
   const plugin = {};
   plugin.id = 'signalk-data-connector';
-  plugin.name = 'SignalK server & client for encrypted UDP data transfer';
-  plugin.description = 'tbd';
+  plugin.name = 'Signal K Data Connector';
+  plugin.description = 'Server & client solution for encrypted compressed UDP data transfer between Signal K units';
   var unsubscribes = [];
   let localSubscription;
   let socketUdp;
@@ -233,45 +233,45 @@ module.exports = function createPlugin(app) {
       serverType: {
         type: 'boolean',
         default: true,
-        title: 'Server/Client: If selected, Server mode otherwise Client',
+        title: 'SERVER/CLIENT: If selected, Server mode otherwise Client',
       },
       udpPort: {
         type: 'number',
-        title: 'Server/Client: UDP port',
+        title: 'SERVER/CLIENT: UDP port',
         default: 4446,
       },
       secretKey: {
         type: 'string',
-        title: 'Server/Client: SecretKey for encryptio and decryption (32 characters)',
+        title: 'SERVER/CLIENT: SecretKey for encryptio and decryption (32 characters)',
       },
       subscribeReadIntervalTime: {
         type: 'integer',
         default: 1000,
-        title: 'Client: Subscription config file read rate, [ms]',
+        title: 'CLIENT: Subscription config file read rate, [ms]',
       },
       helloMessageSender: {
         type: 'integer',
         default: 60,
-        title: 'Client: Define how often Vessel static data is sent, [s]',
+        title: 'CLIENT: Define how often Vessel static data is sent, [s]',
       },
       udpAddress: {
         type: 'string',
-        title: 'Client: Destination UDP address',
+        title: 'CLIENT: Destination UDP address',
         default: '127.0.0.1',
       },
       testAddress: {
         type: 'string',
-        title: 'Client: Connectivity, address for connectivity test, e.g web server',
+        title: 'CLIENT: Connectivity, address for connectivity test, e.g web server',
         default: '127.0.0.1',
       },
       testPort: {
         type: 'number',
-        title: 'Client: Connectivity, port for connectivity test, e.g. web server port',
+        title: 'CLIENT: Connectivity, port for connectivity test, e.g. web server port',
         default: 80,
       },
       pingIntervalTime: {
         type: 'number',
-        title: 'Client: Connectivity, testing interval time in minutes',
+        title: 'CLIENT: Connectivity, testing interval time in minutes',
         default: 1,
       },
     },
