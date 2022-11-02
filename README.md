@@ -14,3 +14,7 @@ Client configuration
 - Connectivity, address for connectivity test, e.g web server
 - Connectivity, port for connectivity test, e.g. web server port
 - Connectivity, testing interval time in minutes
+
+![datarate](Doc/Datarate.png)
+- Data comparison betwwen Encrypted and Compressed UDP data to WebSocket
+- ~30-40 deltas/sec, 120 paths 
