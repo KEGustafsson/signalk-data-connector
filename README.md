@@ -17,7 +17,8 @@ Client configuration
 
 ## Data rate comparison between Encrypted and Compressed UDP data transfer to WebSocket
 ![datarate](Doc/Datarate.png)
-- ~30-40 deltas/sec, 120 paths 
+- ~30-40 deltas/sec, 120 paths
+- higher the delta amount per pre-defined collection timeslot, the better compression from Brottli. Greater improvement compared to WebSocket
 
 ## Operations
 Client:
