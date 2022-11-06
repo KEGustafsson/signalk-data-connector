@@ -17,8 +17,10 @@ Client configuration
 
 ## Data rate comparison between Encrypted and Compressed UDP data transfer to WebSocket
 ![datarate](Doc/Datarate.png)
-- ~30-40 deltas/sec, 120 paths --> ~3-4 deltas / 100ms
-- higher the delta amount per pre-defined collection timeslot, the better compression from Brottli.
+- Test data setup: ~30-40 deltas/sec, 120 paths
+- 1st section: UDP 1000ms -> 30-40 deltas/pkg, 2nd section: UDP 100ms -> 3-4 deltas/pkg, 3rd section: WebSocket -> 1 delta/pkg
+
+Note: Higher the delta amount per pre-defined collection timeslot, the better the compression from Brottli used with UDP transfer.
 ## Operations
 Client:
 - client Signal K deltas are collected over pre-defined timeslot (e.g. 100ms)
