@@ -178,25 +178,32 @@ module.exports = function createPlugin(app) {
     }
   };
 
+
+  function deltaBuffer(delta) {
+    return Buffer.from(JSON.stringify(delta), "utf8")
+  }
+
   // Based on testing, Compression -> Encryption -> Compression was the most efficient way to reduce size
   function packCrypt(delta, secretKey, udpAddress, udpPort) {
     zlib.brotliCompress(
-      Buffer.from(JSON.stringify(delta), "utf8"),
+      deltaBuffer(delta),
       {params: {
         [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
         [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+        [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBuffer(delta).length,
       }},
       (err, delta) => {
         if (err) {
           console.error("An error occurred:", err);
           process.exitCode = 1;
         }
-        delta = encrypt(Buffer.from(JSON.stringify(delta), "utf8"), secretKey);
+        delta = encrypt(deltaBuffer(delta), secretKey);
         zlib.brotliCompress(
-          Buffer.from(JSON.stringify(delta), "utf8"),
+          deltaBuffer(delta),
           {params: {
-            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
             [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBuffer(delta).length,
           }},
           (err, delta) => {
             if (err) {
