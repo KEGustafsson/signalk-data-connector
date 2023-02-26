@@ -142,22 +142,22 @@ module.exports = function createPlugin(app) {
             (delta) => {
               if (readyToSend) {
                 try {
-                  // Remove GSV sentence from send list. Now hard coded.
-                  if (delta.updates[0].source.sentence !== "GSV") {
-                    deltas.push(delta);
-                    if (timer) {
-                      packCrypt(
-                        deltas,
-                        options.secretKey,
-                        options.udpAddress,
-                        options.udpPort
-                      );
-                      app.debug(JSON.stringify(deltas, null, 2));
-                      deltas = [];
-                      timer = false;
-                    }
+                  if (delta.updates[0].source.sentence == "GSV") {
+                    delta = {}
                   }
                 } catch (error) {}
+                deltas.push(delta);
+                if (timer) {
+                  packCrypt(
+                    deltas,
+                    options.secretKey,
+                    options.udpAddress,
+                    options.udpPort
+                  );
+                  app.debug(JSON.stringify(deltas, null, 2));
+                  deltas = [];
+                  timer = false;
+                }
               }
             }
           );
