@@ -1,7 +1,7 @@
 /* eslint-disable no-undef */
 const fs = require("fs");
 const path = require("path");
-const zlib = require("zlib");
+const zlib = require('node:zlib');
 const dgram = require("dgram");
 const { encrypt, decrypt } = require("./crypto");
 const Monitor = require("ping-monitor");
@@ -182,6 +182,10 @@ module.exports = function createPlugin(app) {
   function packCrypt(delta, secretKey, udpAddress, udpPort) {
     zlib.brotliCompress(
       Buffer.from(JSON.stringify(delta), "utf8"),
+      {params: {
+        [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
+        [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+      }},
       (err, delta) => {
         if (err) {
           console.error("An error occurred:", err);
@@ -190,6 +194,10 @@ module.exports = function createPlugin(app) {
         delta = encrypt(Buffer.from(JSON.stringify(delta), "utf8"), secretKey);
         zlib.brotliCompress(
           Buffer.from(JSON.stringify(delta), "utf8"),
+          {params: {
+            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+            [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+          }},
           (err, delta) => {
             if (err) {
               console.error("An error occurred:", err);
