@@ -148,7 +148,7 @@ module.exports = function createPlugin(app) {
                 } catch (error) {}
                 deltas.push(delta);
                 setImmediate(() =>
-                  app.emit('connectionwrite', { providerId: plugin.id })
+                  app.reportOutputMessages()
                 )
                 if (timer) {
                   packCrypt(
