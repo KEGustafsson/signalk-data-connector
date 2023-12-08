@@ -179,6 +179,15 @@ module.exports = function createPlugin(app) {
         pingTimeout.refresh();
       });
 
+      myMonitor.on("error", function (error) {
+        if (error) {
+          const errorMessage = (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') ?
+            `Error: Could not resolve the address ${options.testAddress}. Please check the hostname and try again.` :
+            `An unexpected error occurred: ${error.message || error}`;
+          console.error(errorMessage);
+        }
+      });
+
       pingTimeout = setTimeout(() => {
         readyToSend = false;
         pingTimeout.refresh();
