@@ -181,10 +181,12 @@ module.exports = function createPlugin(app) {
 
       myMonitor.on("error", function (error) {
         if (error) {
-          const errorMessage = (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') ?
+          if (options.loggingToggle) {
+            const errorMessage = (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') ?
             `Error: Could not resolve the address ${options.testAddress}. Please check the hostname and try again.` :
             `An unexpected error occurred: ${error.message || error}`;
-          console.error(errorMessage);
+            console.error(errorMessage);
+          }
         }
       });
 
@@ -336,6 +338,11 @@ module.exports = function createPlugin(app) {
         type: "number",
         title: "CLIENT: Connectivity, testing interval time in minutes",
         default: 1,
+      },
+      loggingToggle: {
+        type: "boolean",
+        default: false,
+        title: "Log issues to Server Log",
       },
     },
   };
