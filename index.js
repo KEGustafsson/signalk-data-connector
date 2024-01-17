@@ -184,7 +184,7 @@ module.exports = function createPlugin(app) {
           const errorMessage = (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') ?
             `Error: Could not resolve the address ${options.testAddress}. Please check the hostname and try again.` :
             `An unexpected error occurred: ${error.message || error}`;
-          console.error(errorMessage);
+          //console.error(errorMessage);
         }
       });
 
