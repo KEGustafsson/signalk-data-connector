@@ -1,10 +1,8 @@
 {
-  "context": "vessels.*",
+  "context": "*",
   "subscribe": [
     {
-      "path": "*",
-      "policy": "instant",
-      "minPeriod": 50
+      "path": "*"
     }
   ]
 }
