@@ -63,20 +63,8 @@ module.exports = function createPlugin(app) {
               timestamp: new Date(Date.now()),
               values: [
                 {
-                  path: "",
-                  value: { name: name },
-                },
-                {
-                  path: "",
-                  value: { mmsi: mmsi },
-                },
-                {
-                  path: "",
-                  value: { communication: { callsignVhf: callsign } },
-                },
-                {
-                  path: "communication",
-                  value: { callsignVhf: callsign },
+                  path: "networking.modem.latencyTime",
+                  value: new Date(Date.now()),
                 },
               ],
             },
