@@ -1,3 +1,4 @@
+'use strict';
 /* eslint-disable no-undef */
 const fs = require("fs");
 const path = require("path");
@@ -160,14 +161,19 @@ module.exports = function createPlugin(app) {
         address: options.testAddress,
         port: options.testPort,
         interval: options.pingIntervalTime, // minutes
+        protocol: 'tcp'
       });
 
-      myMonitor.on("up", function () {
+      myMonitor.on('up', function () {
         readyToSend = true;
         pingTimeout.refresh();
       });
 
-      myMonitor.on("error", function (error) {
+      myMonitor.on('down', function (res, state) {
+        app.debug(state.address + ':' + state.port + ' is down! ');
+      });
+
+      myMonitor.on('error', function (error) {
         if (error) {
           const errorMessage = (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') ?
             `Error: Could not resolve the address ${options.testAddress}. Please check the hostname and try again.` :
