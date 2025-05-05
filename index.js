@@ -171,7 +171,6 @@ module.exports = function createPlugin(app) {
       });
 
       myMonitor.on('down', function (res, state) {
-        app.debug(state.address + ':' + state.port + ' is down! ');
         readyToSend = false;
         //console.log("down: " + state.address + ':' + state.port);
       });
