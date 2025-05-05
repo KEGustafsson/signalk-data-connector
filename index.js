@@ -164,22 +164,45 @@ module.exports = function createPlugin(app) {
         protocol: 'tcp'
       });
 
-      myMonitor.on('up', function () {
+      myMonitor.on('up', function (res, state) {
         readyToSend = true;
         pingTimeout.refresh();
+        console.log("up: " + state.address + ':' + state.port);
       });
 
       myMonitor.on('down', function (res, state) {
         app.debug(state.address + ':' + state.port + ' is down! ');
+        readyToSend = false;
+        console.log("down: " + state.address + ':' + state.port);
       });
 
-      myMonitor.on('error', function (error) {
+      myMonitor.on('restored', function (res, state) {
+        readyToSend = true;
+        pingTimeout.refresh();
+        console.log("restored: " + state.address + ':' + state.port);
+      });
+
+      myMonitor.on('stop', function (res, state) {
+        readyToSend = false;
+        console.log("stopped: " + state.address + ':' + state.port);
+      });
+
+      myMonitor.on('timeout', function (error, res) {
+        readyToSend = false;
+        console.log("timeout: " + error);
+      });
+
+      myMonitor.on('error', function (error, res) {
+        readyToSend = false;
+        console.log("error: " + error);
+        /*
         if (error) {
           const errorMessage = (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') ?
             `Error: Could not resolve the address ${options.testAddress}. Please check the hostname and try again.` :
             `An unexpected error occurred: ${error.message || error}`;
           //console.error(errorMessage);
         }
+        */
       });
 
       pingTimeout = setTimeout(() => {
