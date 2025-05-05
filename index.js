@@ -167,34 +167,34 @@ module.exports = function createPlugin(app) {
       myMonitor.on('up', function (res, state) {
         readyToSend = true;
         pingTimeout.refresh();
-        console.log("up: " + state.address + ':' + state.port);
+        //console.log("up: " + state.address + ':' + state.port);
       });
 
       myMonitor.on('down', function (res, state) {
         app.debug(state.address + ':' + state.port + ' is down! ');
         readyToSend = false;
-        console.log("down: " + state.address + ':' + state.port);
+        //console.log("down: " + state.address + ':' + state.port);
       });
 
       myMonitor.on('restored', function (res, state) {
         readyToSend = true;
         pingTimeout.refresh();
-        console.log("restored: " + state.address + ':' + state.port);
+        //console.log("restored: " + state.address + ':' + state.port);
       });
 
       myMonitor.on('stop', function (res, state) {
         readyToSend = false;
-        console.log("stopped: " + state.address + ':' + state.port);
+        //console.log("stopped: " + state.address + ':' + state.port);
       });
 
       myMonitor.on('timeout', function (error, res) {
         readyToSend = false;
-        console.log("timeout: " + error);
+        //console.log("timeout: " + error);
       });
 
       myMonitor.on('error', function (error, res) {
         readyToSend = false;
-        console.log("error: " + error);
+        //console.log("error: " + error);
         /*
         if (error) {
           const errorMessage = (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') ?
