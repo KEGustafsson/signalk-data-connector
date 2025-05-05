@@ -42,9 +42,21 @@ module.exports = function createPlugin(app) {
       });
     } else {
       // Client section
-      let deltaTimerTimeFile = JSON.parse(
-        fs.readFileSync(path.join(__dirname, "delta_timer.json"))
-      );
+      let deltaTimerTimeFile;
+      try {
+        deltaTimerTimeFile = JSON.parse(
+          fs.readFileSync(path.join(__dirname, "delta_timer.json"))
+        );
+      } catch (error) {
+        deltaTimerTimeFile = {
+          "context": "*",
+          "subscribe": [
+            {
+              "path": "*"
+            }
+          ]
+        };
+      }
       deltaTimerTime = deltaTimerTimeFile.deltaTimer;
       deltaTimerTimeNew = deltaTimerTime;
 
