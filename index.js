@@ -27,10 +27,7 @@ module.exports = function createPlugin(app) {
   let deltas = [];
   let deltasFixed = [];
   let timer = false;
-  let mmsi;
-  let name;
-  let callsign;
-
+  
   // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
 
@@ -45,10 +42,6 @@ module.exports = function createPlugin(app) {
       });
     } else {
       // Client section
-      mmsi = app.getSelfPath("mmsi");
-      name = app.getSelfPath("name");
-      callsign = app.getSelfPath("communication.callsignVhf");
-      app.debug("SignalK data connector client started");
       let deltaTimerTimeFile = JSON.parse(
         fs.readFileSync(path.join(__dirname, "delta_timer.json"))
       );
@@ -58,7 +51,7 @@ module.exports = function createPlugin(app) {
       // helloMessageSender is needed due to nature of UDP. Sending vessel information pre-defined intervals
       helloMessageSender = setInterval(() => {
         const fixedDelta = {
-          context: "vessels.urn:mrn:imo:mmsi:" + mmsi,
+          context: "vessels.urn:mrn:imo:mmsi:" + app.getSelfPath("mmsi"),
           updates: [
             {
               timestamp: new Date(Date.now()),
