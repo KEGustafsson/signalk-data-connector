@@ -20,7 +20,7 @@
     "ping-monitor": "^0.8.2"
   },
   "devDependencies": {
-    "eslint": "^9.26.0",
+    "eslint": "^9.31.0",
     "prettier": "^3.5.3"
   }
 }
