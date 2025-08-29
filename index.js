@@ -49,12 +49,7 @@ module.exports = function createPlugin(app) {
         );
       } catch (error) {
         deltaTimerTimeFile = {
-          "context": "*",
-          "subscribe": [
-            {
-              "path": "*"
-            }
-          ]
+          "deltaTimer": 1000
         };
       }
       deltaTimerTime = deltaTimerTimeFile.deltaTimer;
@@ -109,13 +104,31 @@ module.exports = function createPlugin(app) {
 
       subscribeRead = setInterval(() => {
         // subscription.json file contains subscription details, read from the file
-        let localSubscriptionNew = JSON.parse(
-          fs.readFileSync(path.join(__dirname, "subscription.json"))
-        );
+        try {
+          let localSubscriptionNew = JSON.parse(
+            fs.readFileSync(path.join(__dirname, "subscription.json"))
+          );          
+        } catch (error) {
+          let localSubscriptionNew = {
+            "context": "*",
+            "subscribe": [
+              {
+                "path": "*"
+              }
+            ]
+          };
+        }
         // delta_timer.json file contains batch reading interval details, read from the file
-        let deltaTimerTimeNewFile = JSON.parse(
-          fs.readFileSync(path.join(__dirname, "delta_timer.json"))
-        );
+        try {
+          let deltaTimerTimeNewFile = JSON.parse(
+            fs.readFileSync(path.join(__dirname, "delta_timer.json"))
+          );
+        } catch (error) {
+          let deltaTimerTimeNewFile = {
+            "deltaTimer": 1000
+          };
+        }
+        
         deltaTimerTimeNew = deltaTimerTimeNewFile.deltaTimer;
         if (
           JSON.stringify(localSubscriptionNew) !==
