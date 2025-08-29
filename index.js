@@ -104,12 +104,13 @@ module.exports = function createPlugin(app) {
 
       subscribeRead = setInterval(() => {
         // subscription.json file contains subscription details, read from the file
+        let localSubscriptionNew;
         try {
-          let localSubscriptionNew = JSON.parse(
+          localSubscriptionNew = JSON.parse(
             fs.readFileSync(path.join(__dirname, "subscription.json"))
           );          
         } catch (error) {
-          let localSubscriptionNew = {
+          localSubscriptionNew = {
             "context": "*",
             "subscribe": [
               {
@@ -119,12 +120,13 @@ module.exports = function createPlugin(app) {
           };
         }
         // delta_timer.json file contains batch reading interval details, read from the file
+        let deltaTimerTimeNewFile;
         try {
-          let deltaTimerTimeNewFile = JSON.parse(
+          deltaTimerTimeNewFile = JSON.parse(
             fs.readFileSync(path.join(__dirname, "delta_timer.json"))
           );
         } catch (error) {
-          let deltaTimerTimeNewFile = {
+          deltaTimerTimeNewFile = {
             "deltaTimer": 1000
           };
         }
