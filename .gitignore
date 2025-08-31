@@ -1,1 +1,33 @@
-node_modules
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Build output
+public/
+dist/
+
+# Configuration files (may contain sensitive data)
+config/*.json
+
+# Development
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Coverage reports
+coverage/
+
+# Webpack cache
+.cache/
