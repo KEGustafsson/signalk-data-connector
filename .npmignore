@@ -6,7 +6,7 @@ webpack.config.js
 
 # Configuration examples
 config-examples/
-docs/
+Doc/
 
 # Git files
 .git/
