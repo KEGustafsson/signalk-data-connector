@@ -1,6 +1,7 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
 
 module.exports = (env, argv) => {
   const isProduction = argv.mode === 'production';
@@ -38,6 +39,15 @@ module.exports = (env, argv) => {
         template: './src/webapp/index.html',
         filename: 'index.html',
         title: 'SignalK Data Connector Configuration'
+      }),
+      new CopyWebpackPlugin({
+        patterns: [
+          {
+            from: path.resolve(__dirname, 'src/webapp/icons'),
+            to: path.resolve(__dirname, 'public/icons'),
+            noErrorOnMissing: true
+          }
+        ]
       }),
       ...(isProduction ? [
         new MiniCssExtractPlugin({
