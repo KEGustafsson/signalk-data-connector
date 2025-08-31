@@ -8,8 +8,10 @@ A SignalK plugin for secure, encrypted UDP data transmission with compression, f
 - **Client/Server Mode**: Can operate as either data sender (client) or receiver (server)
 - **Configurable Delta Timer**: Control data collection frequency
 - **Flexible Subscriptions**: Subscribe to specific SignalK data paths
-- **Modern Web UI**: Beautiful, responsive configuration interface
+- **Modern Web UI**: Beautiful, responsive configuration interface with custom icon
 - **Real-time Configuration**: Edit settings without server restart
+- **Webpack Build System**: Modern build pipeline with asset versioning and source maps
+- **Connectivity Monitoring**: Optional ping monitoring for client connections
 
 ## Installation
 
@@ -120,6 +122,19 @@ Configure the plugin through SignalK's admin interface:
 - Results in 3-4 deltas per packet
 - Faster updates but less compression
 
+### Data Rate Comparison
+
+The following chart demonstrates the significant bandwidth savings achieved by this plugin compared to standard WebSocket connections:
+
+![Data Rate Comparison](./Doc/Datarate.png)
+
+**Key Performance Benefits:**
+- **1000ms Collection Time**: ~44.1 kb/s (optimal compression)
+- **100ms Collection Time**: ~107.7 kb/s (faster updates)
+- **WebSocket Realtime**: ~149.5 kb/s (highest bandwidth usage)
+
+The encrypted & compressed UDP approach provides **70% bandwidth reduction** compared to WebSocket connections while maintaining data integrity through AES-256 encryption.
+
 ## Architecture
 
 The plugin implements a multi-layer compression and encryption system:
@@ -142,31 +157,19 @@ The plugin implements a multi-layer compression and encryption system:
 
 ### Building the Webapp
 ```bash
-# Development build with watching
+# Development build with watching (creates unversioned files)
 npm run dev
 
-# Production build
+# Production build (creates versioned files with contenthash)
 npm run build
 ```
 
-### File Structure
-```
-signalk-data-connector/
-├── index.js                 # Main plugin file
-├── package.json            # Node.js dependencies
-├── webpack.config.js       # Webpack configuration
-├── .babelrc               # Babel configuration
-├── config/                # Configuration files
-│   ├── delta_timer.json
-│   └── subscription.json
-├── src/webapp/            # Webapp source
-│   ├── index.html
-│   ├── index.js
-│   └── styles.css
-└── public/                # Built webapp (generated)
-    ├── index.html
-    └── [generated files]
-```
+The build process uses Webpack 5 with:
+- Babel for ES6+ transpilation
+- CSS extraction and processing
+- Asset versioning for cache busting
+- Source maps for debugging
+- Automatic cleaning of output directory
 
 ### API Endpoints
 
@@ -215,7 +218,7 @@ Enable plugin debug logging in SignalK settings to see detailed operation inform
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Build and test the webapp
+4. Build and test the webapp (`npm run build`)
 5. Submit a pull request
 
 ## License
