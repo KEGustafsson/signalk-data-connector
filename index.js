@@ -57,7 +57,7 @@ module.exports = function createPlugin(app) {
   }
 
   plugin.start = function (options) {
-    if (options.serverType) {
+    if (options.serverType === true || options.serverType === "server") {
       // Server section
       app.debug("SignalK data connector server started");
       socketUdp = dgram.createSocket({ type: "udp4", reuseAddr: true });
@@ -376,56 +376,129 @@ module.exports = function createPlugin(app) {
 
   plugin.schema = {
     type: "object",
+    title: "SignalK Data Connector Configuration",
+    description: "Configure encrypted UDP data transmission between SignalK units with compression and connectivity monitoring",
     required: ["udpPort", "secretKey"],
     properties: {
       serverType: {
-        type: "boolean",
-        default: true,
-        title: "SERVER/CLIENT: If selected, Server mode otherwise Client",
+        type: "string",
+        default: "client",
+        title: "Operation Mode",
+        description: "Select the operation mode for this plugin instance. Server mode receives and processes data from clients. Client mode sends data to a server.",
+        enum: ["server", "client"],
+        enumNames: ["Server Mode - Receive Data", "Client Mode - Send Data"]
       },
       udpPort: {
         type: "number",
-        title: "SERVER/CLIENT: UDP port",
+        title: "UDP Port Number",
+        description: "The UDP port used for data transmission. Both server and client must use the same port number.",
         default: 4446,
+        minimum: 1024,
+        maximum: 65535,
+        examples: [4446, 8080, 9090]
       },
       secretKey: {
         type: "string",
-        title:
-          "SERVER/CLIENT: SecretKey for encryptio and decryption (32 characters)",
+        title: "Encryption Secret Key",
+        description: "A 32-character secret key used for AES encryption/decryption. Both server and client must use the identical key for secure communication.",
+        minLength: 32,
+        maxLength: 32,
+        pattern: "^[A-Za-z0-9!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>\\/?]{32}$",
+        examples: ["MySecretKey123456789012345678901", "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"]
       },
       subscribeReadIntervalTime: {
         type: "integer",
         default: 1000,
-        title: "CLIENT: Subscription config file read rate, [ms]",
+        title: "Configuration Refresh Rate",
+        description: "How often to check for changes in subscription configuration files (milliseconds). Lower values provide faster config updates but use more resources.",
+        minimum: 100,
+        maximum: 60000,
+        examples: [500, 1000, 2000, 5000]
       },
       helloMessageSender: {
         type: "integer",
         default: 60,
-        title: "CLIENT: Define how often Vessel static data is sent, [s]",
+        title: "Vessel Data Broadcast Interval",
+        description: "How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds.",
+        minimum: 10,
+        maximum: 3600,
+        examples: [30, 60, 120, 300]
       },
       udpAddress: {
         type: "string",
-        title: "CLIENT: Destination UDP address",
+        title: "Destination Server Address",
+        description: "IP address or hostname of the SignalK server to send data to. Use the server's network address.",
         default: "127.0.0.1",
+        pattern: "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
+        examples: ["192.168.1.100", "10.0.0.50", "signalk.mydomain.com", "localhost"]
       },
       testAddress: {
         type: "string",
-        title:
-          "CLIENT: Connectivity, address for connectivity test, e.g web server",
+        title: "Connectivity Test Target",
+        description: "IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service (e.g., router, DNS server, or web server).",
         default: "127.0.0.1",
+        pattern: "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
+        examples: ["8.8.8.8", "192.168.1.1", "google.com", "1.1.1.1"]
       },
       testPort: {
         type: "number",
-        title:
-          "CLIENT: Connectivity, port for connectivity test, e.g. web server port",
+        title: "Connectivity Test Port",
+        description: "TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS), 22 (SSH).",
         default: 80,
+        minimum: 1,
+        maximum: 65535,
+        examples: [80, 443, 53, 22, 8080]
       },
       pingIntervalTime: {
         type: "number",
-        title: "CLIENT: Connectivity, testing interval time in minutes",
+        title: "Connectivity Check Interval",
+        description: "How often to test network connectivity (minutes). Data transmission is paused when connectivity fails. Recommended: 1-5 minutes for reliable networks.",
         default: 1,
-      },
+        minimum: 0.1,
+        maximum: 60,
+        examples: [0.5, 1, 2, 5, 10]
+      }
     },
+    additionalProperties: false,
+    if: {
+      properties: {
+        serverType: { const: "client" }
+      }
+    },
+    then: {
+      required: ["udpPort", "secretKey", "udpAddress", "testAddress", "testPort"],
+      properties: {
+        subscribeReadIntervalTime: { 
+          description: "CLIENT ONLY: How often to check for changes in subscription configuration files (milliseconds). Lower values provide faster config updates but use more resources."
+        },
+        helloMessageSender: { 
+          description: "CLIENT ONLY: How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds."
+        },
+        udpAddress: { 
+          description: "CLIENT ONLY: IP address or hostname of the SignalK server to send data to. Use the server's network address."
+        },
+        testAddress: { 
+          description: "CLIENT ONLY: IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service."
+        },
+        testPort: { 
+          description: "CLIENT ONLY: TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS)."
+        },
+        pingIntervalTime: { 
+          description: "CLIENT ONLY: How often to test network connectivity (minutes). Data transmission is paused when connectivity fails."
+        }
+      }
+    },
+    else: {
+      required: ["udpPort", "secretKey"],
+      properties: {
+        subscribeReadIntervalTime: false,
+        helloMessageSender: false,
+        udpAddress: false,
+        testAddress: false,
+        testPort: false,
+        pingIntervalTime: false
+      }
+    }
   };
 
   return plugin;
