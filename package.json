@@ -9,6 +9,10 @@
     "signalk-webapp",
     "signalk-category-utility"
   ],
+  "signalk": {
+    "appIcon": "./icons/icon-72x72.png",
+    "displayName": "Data Connector Configuration"
+  },
   "signalk-plugin-enabled-by-default": false,
   "scripts": {
     "build": "webpack --mode production",
@@ -29,9 +33,5 @@
     "babel-loader": "^9.1.2"
   },
   "author": "Karl-Erik Gustafsson",
-  "license": "MIT",
-  "signalk": {
-    "appIcon": "./public/icon.png",
-    "displayName": "Data Connector Configuration"
-  }
+  "license": "MIT"
 }
