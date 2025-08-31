@@ -6,9 +6,6 @@ npm-debug.log*
 # public/
 # dist/
 
-# Configuration files (may contain sensitive data)
-config/*.json
-
 # Development
 .DS_Store
 *.log
