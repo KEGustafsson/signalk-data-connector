@@ -31,6 +31,31 @@ module.exports = function createPlugin(app) {
   // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
 
+  function loadConfigFile(filename) {
+    const filePath = path.join(__dirname, 'config', filename);
+    try {
+      if (fs.existsSync(filePath)) {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      }
+    } catch (err) {
+      app.error(`Error loading ${filename}: ${err.message}`);
+    }
+    return null;
+  }
+
+  function saveConfigFile(filename, data) {
+    const configDir = path.join(__dirname, 'config');
+    const filePath = path.join(configDir, filename);
+        
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      return true;
+    } catch (err) {
+      app.error(`Error saving ${filename}: ${err.message}`);
+      return false;
+    }
+  }
+
   plugin.start = function (options) {
     if (options.serverType) {
       // Server section
@@ -42,10 +67,37 @@ module.exports = function createPlugin(app) {
       });
     } else {
       // Client section
+      plugin.registerWithRouter = (router) => {
+        router.get('/config/:filename', (req, res) => {
+          const filename = req.params.filename;
+          if (!['delta_timer.json', 'subscription.json'].includes(filename)) {
+            return res.status(400).json({ error: 'Invalid filename' });
+          }
+          
+          res.contentType('application/json');
+          const config = loadConfigFile(filename);
+          res.send(JSON.stringify(config || {}));
+        });
+
+        router.post('/config/:filename', (req, res) => {
+          const filename = req.params.filename;
+          if (!['delta_timer.json', 'subscription.json'].includes(filename)) {
+            return res.status(400).json({ error: 'Invalid filename' });
+          }
+
+          const success = saveConfigFile(filename, req.body);
+          if (success) {
+            res.status(200).send("OK");
+          } else {
+            res.status(500).send("Failed to save configuration");
+          }
+        });
+      };
+
       let deltaTimerTimeFile;
       try {
         deltaTimerTimeFile = JSON.parse(
-          fs.readFileSync(path.join(__dirname, "delta_timer.json"))
+          fs.readFileSync(path.join(__dirname, "config", "delta_timer.json"))
         );
       } catch (error) {
         deltaTimerTimeFile = {
@@ -107,7 +159,7 @@ module.exports = function createPlugin(app) {
         let localSubscriptionNew;
         try {
           localSubscriptionNew = JSON.parse(
-            fs.readFileSync(path.join(__dirname, "subscription.json"))
+            fs.readFileSync(path.join(__dirname, "config", "subscription.json"))
           );          
         } catch (error) {
           localSubscriptionNew = {

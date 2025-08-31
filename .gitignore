@@ -3,8 +3,8 @@ node_modules/
 npm-debug.log*
 
 # Build output
-public/
-dist/
+# public/
+# dist/
 
 # Configuration files (may contain sensitive data)
 config/*.json

@@ -5,7 +5,9 @@
   "main": "index.js",
   "keywords": [
     "signalk-node-server-plugin",
-    "signalk-category-network"
+    "signalk-category-network",
+    "signalk-webapp",
+    "signalk-category-utility"
   ],
   "signalk-plugin-enabled-by-default": false,
   "scripts": {
