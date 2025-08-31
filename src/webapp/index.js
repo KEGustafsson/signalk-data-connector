@@ -4,14 +4,31 @@ class DataConnectorConfig {
     constructor() {
         this.deltaTimerConfig = null;
         this.subscriptionConfig = null;
+        this.isServerMode = false;
         this.init();
     }
 
     async init() {
-        await this.loadConfigurations();
-        this.setupEventListeners();
-        this.updateUI();
-        this.updateStatus();
+        await this.checkServerMode();
+        if (this.isServerMode) {
+            this.showServerModeUI();
+        } else {
+            await this.loadConfigurations();
+            this.setupEventListeners();
+            this.updateUI();
+            this.updateStatus();
+        }
+    }
+
+    async checkServerMode() {
+        try {
+            // Try to access the configuration API
+            const response = await fetch('/plugins/signalk-data-connector/config/delta_timer.json');
+            this.isServerMode = !response.ok && (response.status === 404 || response.status === 405);
+        } catch (error) {
+            // If fetch fails completely, assume server mode
+            this.isServerMode = true;
+        }
     }
 
     async loadConfigurations() {
@@ -248,6 +265,64 @@ class DataConnectorConfig {
         }
 
         statusDiv.innerHTML = statusHtml;
+    }
+
+    showServerModeUI() {
+        const container = document.querySelector('.container');
+        container.innerHTML = `
+            <div class="config-section">
+                <div class="card server-mode-card">
+                    <div class="card-header">
+                        <h2>🖥️ Server Mode Active</h2>
+                        <p>This plugin is running in Server Mode</p>
+                    </div>
+                    <div class="card-content">
+                        <div class="server-mode-info">
+                            <h3>Server Mode Information</h3>
+                            <p>This SignalK Data Connector instance is configured to <strong>receive encrypted data</strong> from client devices.</p>
+                            
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <h4>🔧 Configuration</h4>
+                                    <p>Server mode configuration is managed through the SignalK server plugin settings. No additional webapp configuration is required.</p>
+                                </div>
+                                
+                                <div class="info-item">
+                                    <h4>📡 Network</h4>
+                                    <p>The server is listening for encrypted UDP data transmissions from client devices on the configured port.</p>
+                                </div>
+                                
+                                <div class="info-item">
+                                    <h4>🔐 Security</h4>
+                                    <p>All incoming data is automatically decrypted using the configured secret key and integrated into the SignalK data stream.</p>
+                                </div>
+                                
+                                <div class="info-item">
+                                    <h4>📊 Data Flow</h4>
+                                    <p><strong>Client Devices → Server (This Instance) → SignalK Data Stream</strong></p>
+                                </div>
+                            </div>
+
+                            <div class="server-status">
+                                <h4>Current Status</h4>
+                                <div class="status-indicator success">✓ Server is active and listening for client connections</div>
+                            </div>
+
+                            <div class="configuration-note">
+                                <h4>💡 Need to Configure?</h4>
+                                <p>To modify server settings (UDP port, encryption key, etc.), use the SignalK server's plugin configuration interface:</p>
+                                <ol>
+                                    <li>Go to SignalK Admin Panel</li>
+                                    <li>Navigate to Plugin Config</li>
+                                    <li>Find "Signal K Data Connector"</li>
+                                    <li>Adjust settings as needed</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 
     showNotification(message, type = 'success') {
