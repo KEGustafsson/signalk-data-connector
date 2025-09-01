@@ -2,6 +2,8 @@
 
 A SignalK plugin for secure, encrypted UDP data transmission with compression, featuring a modern web-based configuration interface.
 
+![Data Connector Concept](./Doc/DataConnectorConcept.png)
+
 ## Features
 
 - **Encrypted Data Transmission**: AES-256 encryption with Brotli compression
