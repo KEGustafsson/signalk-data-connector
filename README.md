@@ -51,7 +51,7 @@ The plugin implements a multi-layer compression and encryption system:
 
 ## Webapps - Data Connector Configuration (Client)
 
-#### `delta_timer.json`
+### Delta Timer Configuration
 Controls how frequently deltas are collected and sent:
 ```json
 {
@@ -62,7 +62,7 @@ Controls how frequently deltas are collected and sent:
 - Lower values = more frequent updates, higher bandwidth
 - Higher values = better compression ratio, lower bandwidth
 
-#### `subscription.json`
+### Subscription Configuration
 Defines which SignalK data to subscribe to:
 ```json
 {
