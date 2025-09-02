@@ -2,7 +2,7 @@
 
 A SignalK plugin for secure, encrypted UDP data transmission with compression, featuring a modern web-based configuration interface.
 
-![Data Connector Concept](./doc/dataconnectorconcept.jpg)
+![Data Connector Concept](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/dataconnectorconcept.jpg)
 
 ## Features
 
@@ -128,7 +128,7 @@ Configure the plugin through SignalK's admin interface:
 
 The following chart demonstrates the significant bandwidth savings achieved by this plugin compared to standard WebSocket connections:
 
-![Data Rate Comparison](./doc/datarate.jpg)
+![Data Rate Comparison](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/datarate.jpg)
 
 **Key Performance Benefits:**
 - **1000ms Collection Time**: ~44.1 kb/s (optimal compression)
