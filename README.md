@@ -6,11 +6,11 @@ A SignalK plugin for secure, encrypted UDP data transmission with compression, f
 
 ## Features
 
-- **Encrypted Data Transmission**: AES-256 encryption with Brotli compression
+- **Encrypted UDP Data Transmission**: AES-256 encryption with Brotli compression
 - **Client/Server Mode**: Can operate as either data sender (client) or receiver (server)
 - **Configurable Delta Timer**: Control data collection frequency
 - **Flexible Subscriptions**: Subscribe to specific SignalK data paths
-- **Modern Web UI**: Beautiful, responsive configuration interface with custom icon
+- **Modern Web UI**: Responsive configuration interface with custom icon
 - **Real-time Configuration**: Edit settings without server restart
 - **Webpack Build System**: Modern build pipeline with asset versioning and source maps
 - **Connectivity Monitoring**: Optional ping monitoring for client connections
@@ -36,18 +36,21 @@ npm run build
 
 4. Restart your SignalK server
 
-## Configuration
+## Plugin Settings & Usage
 
-### Via Web Interface
+### Server Setup (Data Receiver)
+1. Set mode to "server"
+2. Configure UDP port
+3. Set 32-character encryption key
+4. Received data will be automatically forwarded to SignalK
 
-1. Navigate to `http://your-signalk-server:3000/signalk-data-connector/`
-2. Configure delta timer settings
-3. Set up subscription paths
-4. Save configurations
-
-### Configuration Files
-
-The plugin uses two configuration files in the `config/` directory:
+### Client Setup (Data Sender)
+1. Set mode to "client"
+2. Configure server IP address and UDP port
+3. Set the same 32-character encryption key as server
+4. Configure subscription paths for data to send (WebApp)
+5. Adjust delta timer for optimal performance (WebApp)
+6. Optional connection monitoring, ping
 
 #### `delta_timer.json`
 Controls how frequently deltas are collected and sent:
@@ -71,57 +74,32 @@ Defines which SignalK data to subscribe to:
     },
     {
       "path": "navigation.speedOverGround"
-    },
+    }
+  ]
+}
+```
+```json
+{
+  "context": "*",
+  "subscribe": [
     {
       "path": "*"
     }
   ]
 }
 ```
+
 - `context`: SignalK context (e.g., "vessels.self", "*")
 - `subscribe`: Array of subscription paths
 
-### Plugin Settings
-
-Configure the plugin through SignalK's admin interface:
-
-#### Server Mode
-- **Mode**: Select "server"
-- **UDP Port**: Port to listen on (default: 4001)
-- **Secure Key**: 32-character encryption key
-
-#### Client Mode
-- **Mode**: Select "client"
-- **UDP Port**: Server's UDP port
-- **Secure Key**: Same 32-character key as server
-- **Destination Address**: Server's IP address
-- **Connectivity Test**: Optional connection monitoring
-
-## Usage
-
-### Client Setup (Data Sender)
-1. Set mode to "client"
-2. Configure server address and port
-3. Set the same encryption key as server
-4. Configure subscription paths for data to send
-5. Adjust delta timer for optimal performance
-
-### Server Setup (Data Receiver)
-1. Set mode to "server"
-2. Configure UDP port
-3. Set encryption key
-4. Received data will be automatically forwarded to SignalK
-
 ### Performance Tuning
 
-**For High-Frequency Data (30-40 deltas/second):**
+**For High-Packed Data:**
 - Set delta timer to 1000ms
-- Results in 30-40 deltas per packet
-- Best compression ratio
+- Good compression ratio
 
 **For Low-Latency Applications:**
 - Set delta timer to 100ms
-- Results in 3-4 deltas per packet
 - Faster updates but less compression
 
 ### Data Rate Comparison
