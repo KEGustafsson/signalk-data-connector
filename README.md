@@ -15,26 +15,23 @@ A SignalK plugin for secure, encrypted UDP data transmission with compression, f
 - **Webpack Build System**: Modern build pipeline with asset versioning and source maps
 - **Connectivity Monitoring**: Optional ping monitoring for client connections
 
-## Installation
+## Architecture
 
-1. Clone or download this repository to your SignalK plugins directory:
-```bash
-cd ~/.signalk/node_modules/
-git clone https://github.com/KEGustafsson/signalk-data-connector.git
-```
+The plugin implements a multi-layer compression and encryption system:
 
-2. Install dependencies:
-```bash
-cd signalk-data-connector
-npm install
-```
+### Client (Data Sender)
+1. Collect SignalK deltas over configured time period
+2. Compress JSON data with Brotli
+3. Encrypt with AES-256
+4. Compress encrypted data with Brotli again
+5. Send via UDP
 
-3. Build the webapp:
-```bash
-npm run build
-```
-
-4. Restart your SignalK server
+### Server (Data Receiver)
+1. Receive UDP packet
+2. Decompress outer Brotli layer
+3. Decrypt with AES-256
+4. Decompress inner Brotli layer
+5. Forward deltas to SignalK server
 
 ## Plugin Settings & Usage
 
@@ -51,6 +48,8 @@ npm run build
 4. Configure subscription paths for data to send (WebApp)
 5. Adjust delta timer for optimal performance (WebApp)
 6. Optional connection monitoring, ping
+
+## Webapps - Data Connector Configuration (Client)
 
 #### `delta_timer.json`
 Controls how frequently deltas are collected and sent:
@@ -115,24 +114,6 @@ The following chart demonstrates the significant bandwidth savings achieved by t
 
 The encrypted & compressed UDP approach provides **70% bandwidth reduction** compared to WebSocket connections while maintaining data integrity through AES-256 encryption.
 
-## Architecture
-
-The plugin implements a multi-layer compression and encryption system:
-
-### Client (Data Sender)
-1. Collect SignalK deltas over configured time period
-2. Compress JSON data with Brotli
-3. Encrypt with AES-256
-4. Compress encrypted data with Brotli again
-5. Send via UDP
-
-### Server (Data Receiver)
-1. Receive UDP packet
-2. Decompress outer Brotli layer
-3. Decrypt with AES-256
-4. Decompress inner Brotli layer
-5. Forward deltas to SignalK server
-
 ## Development
 
 ### Building the Webapp
@@ -150,6 +131,27 @@ The build process uses Webpack 5 with:
 - Asset versioning for cache busting
 - Source maps for debugging
 - Automatic cleaning of output directory
+
+## Installation
+
+1. Clone or download this repository to your SignalK plugins directory:
+```bash
+cd ~/.signalk/node_modules/
+git clone https://github.com/KEGustafsson/signalk-data-connector.git
+```
+
+2. Install dependencies:
+```bash
+cd signalk-data-connector
+npm install
+```
+
+3. Build the webapp:
+```bash
+npm run build
+```
+
+4. Restart your SignalK server
 
 ### API Endpoints
 
