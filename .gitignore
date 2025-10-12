@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
 npm-debug.log*
-package-lock.json
 
 # Build output
 # public/
@@ -26,6 +25,10 @@ package-lock.json
 
 # Coverage reports
 coverage/
+*.lcov
+
+# Test snapshots
+__tests__/__snapshots__/
 
 # Webpack cache
 .cache/

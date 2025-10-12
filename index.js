@@ -1,19 +1,26 @@
-'use strict';
+"use strict";
 /* eslint-disable no-undef */
 const fs = require("fs");
 const path = require("path");
-const zlib = require('node:zlib');
+const zlib = require("node:zlib");
 const dgram = require("dgram");
 const { encrypt, decrypt } = require("./crypto");
 const Monitor = require("ping-monitor");
 
 module.exports = function createPlugin(app) {
+  // Constants
+  const DEFAULT_DELTA_TIMER = 1000; // milliseconds
+  const PING_TIMEOUT_BUFFER = 10000; // milliseconds - extra buffer for ping timeout
+  const CONFIG_CHECK_INTERVAL = 1000; // milliseconds - how often to check for config changes
+  const MILLISECONDS_PER_MINUTE = 60000;
+  const MAX_DELTAS_BUFFER_SIZE = 1000; // prevent memory leaks
+
   const plugin = {};
   plugin.id = "signalk-data-connector";
   plugin.name = "Signal K Data Connector";
   plugin.description =
     "Server & client solution for encrypted compressed UDP data transfer between Signal K units";
-  var unsubscribes = [];
+  let unsubscribes = [];
   let localSubscription;
   let socketUdp;
   let readyToSend = false;
@@ -21,21 +28,26 @@ module.exports = function createPlugin(app) {
   let subscribeRead;
   let pingTimeout;
   let deltaTimer;
-  let deltaTimerTime = 1000;
+  let deltaTimerTime = DEFAULT_DELTA_TIMER;
   let deltaTimerTimeNew;
   let deltaTimerSet;
   let deltas = [];
   let deltasFixed = [];
   let timer = false;
-  
+
   // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
 
+  /**
+   * Loads a configuration file from the config directory
+   * @param {string} filename - Name of the config file to load
+   * @returns {Object|null} Parsed JSON object or null if file doesn't exist or error occurs
+   */
   function loadConfigFile(filename) {
-    const filePath = path.join(__dirname, 'config', filename);
+    const filePath = path.join(__dirname, "config", filename);
     try {
       if (fs.existsSync(filePath)) {
-        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        return JSON.parse(fs.readFileSync(filePath, "utf8"));
       }
     } catch (err) {
       app.error(`Error loading ${filename}: ${err.message}`);
@@ -43,10 +55,16 @@ module.exports = function createPlugin(app) {
     return null;
   }
 
+  /**
+   * Saves configuration data to a file in the config directory
+   * @param {string} filename - Name of the config file to save
+   * @param {Object} data - Configuration data to save
+   * @returns {boolean} True if save was successful, false otherwise
+   */
   function saveConfigFile(filename, data) {
-    const configDir = path.join(__dirname, 'config');
+    const configDir = path.join(__dirname, "config");
     const filePath = path.join(configDir, filename);
-        
+
     try {
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
       return true;
@@ -57,6 +75,18 @@ module.exports = function createPlugin(app) {
   }
 
   plugin.start = function (options) {
+    // Validate required options
+    if (!options.secretKey || options.secretKey.length !== 32) {
+      app.error("Secret key must be exactly 32 characters");
+      setStatus("Secret key validation failed");
+      return;
+    }
+    if (!options.udpPort || options.udpPort < 1024 || options.udpPort > 65535) {
+      app.error("UDP port must be between 1024 and 65535");
+      setStatus("UDP port validation failed");
+      return;
+    }
+
     if (options.serverType === true || options.serverType === "server") {
       // Server section
       app.debug("SignalK data connector server started");
@@ -68,21 +98,21 @@ module.exports = function createPlugin(app) {
     } else {
       // Client section
       plugin.registerWithRouter = (router) => {
-        router.get('/config/:filename', (req, res) => {
+        router.get("/config/:filename", (req, res) => {
           const filename = req.params.filename;
-          if (!['delta_timer.json', 'subscription.json'].includes(filename)) {
-            return res.status(400).json({ error: 'Invalid filename' });
+          if (!["delta_timer.json", "subscription.json"].includes(filename)) {
+            return res.status(400).json({ error: "Invalid filename" });
           }
-          
-          res.contentType('application/json');
+
+          res.contentType("application/json");
           const config = loadConfigFile(filename);
           res.send(JSON.stringify(config || {}));
         });
 
-        router.post('/config/:filename', (req, res) => {
+        router.post("/config/:filename", (req, res) => {
           const filename = req.params.filename;
-          if (!['delta_timer.json', 'subscription.json'].includes(filename)) {
-            return res.status(400).json({ error: 'Invalid filename' });
+          if (!["delta_timer.json", "subscription.json"].includes(filename)) {
+            return res.status(400).json({ error: "Invalid filename" });
           }
 
           const success = saveConfigFile(filename, req.body);
@@ -101,7 +131,7 @@ module.exports = function createPlugin(app) {
         );
       } catch (error) {
         deltaTimerTimeFile = {
-          "deltaTimer": 1000
+          deltaTimer: DEFAULT_DELTA_TIMER
         };
       }
       deltaTimerTime = deltaTimerTimeFile.deltaTimer;
@@ -117,20 +147,15 @@ module.exports = function createPlugin(app) {
               values: [
                 {
                   path: "networking.modem.latencyTime",
-                  value: new Date(Date.now()),
-                },
-              ],
-            },
-          ],
+                  value: new Date(Date.now())
+                }
+              ]
+            }
+          ]
         };
         app.debug(JSON.stringify(fixedDelta, null, 2));
         deltasFixed.push(fixedDelta);
-        packCrypt(
-          deltasFixed,
-          options.secretKey,
-          options.udpAddress,
-          options.udpPort
-        );
+        packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
         deltasFixed = [];
       }, options.helloMessageSender * 1000);
 
@@ -152,7 +177,7 @@ module.exports = function createPlugin(app) {
           clearInterval(deltaTimer);
           deltaTimerfunc();
         }
-      }, 1000);
+      }, CONFIG_CHECK_INTERVAL);
 
       subscribeRead = setInterval(() => {
         // subscription.json file contains subscription details, read from the file
@@ -160,13 +185,13 @@ module.exports = function createPlugin(app) {
         try {
           localSubscriptionNew = JSON.parse(
             fs.readFileSync(path.join(__dirname, "config", "subscription.json"))
-          );          
+          );
         } catch (error) {
           localSubscriptionNew = {
-            "context": "*",
-            "subscribe": [
+            context: "*",
+            subscribe: [
               {
-                "path": "*"
+                path: "*"
               }
             ]
           };
@@ -175,19 +200,16 @@ module.exports = function createPlugin(app) {
         let deltaTimerTimeNewFile;
         try {
           deltaTimerTimeNewFile = JSON.parse(
-            fs.readFileSync(path.join(__dirname, "delta_timer.json"))
+            fs.readFileSync(path.join(__dirname, "config", "delta_timer.json"))
           );
         } catch (error) {
           deltaTimerTimeNewFile = {
-            "deltaTimer": 1000
+            deltaTimer: DEFAULT_DELTA_TIMER
           };
         }
-        
+
         deltaTimerTimeNew = deltaTimerTimeNewFile.deltaTimer;
-        if (
-          JSON.stringify(localSubscriptionNew) !==
-          JSON.stringify(localSubscription)
-        ) {
+        if (JSON.stringify(localSubscriptionNew) !== JSON.stringify(localSubscription)) {
           localSubscription = localSubscriptionNew;
           app.debug(localSubscription);
 
@@ -203,21 +225,23 @@ module.exports = function createPlugin(app) {
             (delta) => {
               if (readyToSend) {
                 try {
-                  if (delta.updates[0].source.sentence == "GSV") {
-                    delta = {}
+                  if (delta.updates[0].source.sentence === "GSV") {
+                    delta = {};
                   }
-                } catch (error) {}
+                } catch (error) {
+                  // Ignore GSV sentence check errors - delta structure may vary
+                }
+
+                // Prevent memory leak by limiting buffer size
+                if (deltas.length >= MAX_DELTAS_BUFFER_SIZE) {
+                  app.error(`Delta buffer overflow (${deltas.length} items), clearing buffer`);
+                  deltas = [];
+                }
+
                 deltas.push(delta);
-                setImmediate(() =>
-                  app.reportOutputMessages()
-                )
+                setImmediate(() => app.reportOutputMessages());
                 if (timer) {
-                  packCrypt(
-                    deltas,
-                    options.secretKey,
-                    options.udpAddress,
-                    options.udpPort
-                  );
+                  packCrypt(deltas, options.secretKey, options.udpAddress, options.udpPort);
                   app.debug(JSON.stringify(deltas, null, 2));
                   deltas = [];
                   timer = false;
@@ -233,127 +257,172 @@ module.exports = function createPlugin(app) {
         address: options.testAddress,
         port: options.testPort,
         interval: options.pingIntervalTime, // minutes
-        protocol: 'tcp'
+        protocol: "tcp"
       });
 
-      myMonitor.on('up', function (res, state) {
+      myMonitor.on("up", function (_res, _state) {
         readyToSend = true;
         pingTimeout.refresh();
-        //console.log("up: " + state.address + ':' + state.port);
+        app.debug("Connection monitor: up");
       });
 
-      myMonitor.on('down', function (res, state) {
+      myMonitor.on("down", function (_res, _state) {
         readyToSend = false;
-        //console.log("down: " + state.address + ':' + state.port);
+        app.debug("Connection monitor: down");
       });
 
-      myMonitor.on('restored', function (res, state) {
+      myMonitor.on("restored", function (_res, _state) {
         readyToSend = true;
         pingTimeout.refresh();
-        //console.log("restored: " + state.address + ':' + state.port);
+        app.debug("Connection monitor: restored");
       });
 
-      myMonitor.on('stop', function (res, state) {
+      myMonitor.on("stop", function (_res, _state) {
         readyToSend = false;
-        //console.log("stopped: " + state.address + ':' + state.port);
+        app.debug("Connection monitor: stopped");
       });
 
-      myMonitor.on('timeout', function (error, res) {
+      myMonitor.on("timeout", function (_error, _res) {
         readyToSend = false;
-        //console.log("timeout: " + error);
+        app.debug("Connection monitor: timeout");
       });
 
-      myMonitor.on('error', function (error, res) {
+      myMonitor.on("error", function (error, _res) {
         readyToSend = false;
-        //console.log("error: " + error);
-        /*
         if (error) {
-          const errorMessage = (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') ?
-            `Error: Could not resolve the address ${options.testAddress}. Please check the hostname and try again.` :
-            `An unexpected error occurred: ${error.message || error}`;
-          //console.error(errorMessage);
+          const errorMessage =
+            error.code === "ENOTFOUND" || error.code === "EAI_AGAIN"
+              ? `Could not resolve address ${options.testAddress}. Check hostname.`
+              : `Connection monitor error: ${error.message || error}`;
+          app.debug(errorMessage);
         }
-        */
       });
 
-      pingTimeout = setTimeout(() => {
-        readyToSend = false;
-        pingTimeout.refresh();
-      }, options.pingIntervalTime * 60000 + 10000);
+      pingTimeout = setTimeout(
+        () => {
+          readyToSend = false;
+          pingTimeout.refresh();
+        },
+        options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
+      );
     }
   };
 
-
+  /**
+   * Converts delta object to UTF-8 buffer
+   * @param {Object} delta - Delta object to convert
+   * @returns {Buffer} UTF-8 encoded buffer
+   */
   function deltaBuffer(delta) {
-    return Buffer.from(JSON.stringify(delta), "utf8")
+    return Buffer.from(JSON.stringify(delta), "utf8");
   }
 
-  // Based on testing, Compression -> Encryption -> Compression was the most efficient way to reduce size
+  /**
+   * Compresses, encrypts, and sends delta data via UDP
+   * Based on testing, Compression -> Encryption -> Compression was the most efficient way to reduce size
+   * @param {Object} delta - Delta data to send
+   * @param {string} secretKey - 32-character encryption key
+   * @param {string} udpAddress - Destination IP address
+   * @param {number} udpPort - Destination UDP port
+   */
   function packCrypt(delta, secretKey, udpAddress, udpPort) {
-    zlib.brotliCompress(
-      deltaBuffer(delta),
-      {params: {
-        [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
-        [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
-        [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBuffer(delta).length,
-      }},
-      (err, delta) => {
-        if (err) {
-          console.error("An error occurred:", err);
-          process.exitCode = 1;
-        }
-        delta = encrypt(deltaBuffer(delta), secretKey);
-        zlib.brotliCompress(
-          deltaBuffer(delta),
-          {params: {
+    try {
+      const deltaBufferData = deltaBuffer(delta);
+      zlib.brotliCompress(
+        deltaBufferData,
+        {
+          params: {
             [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
             [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
-            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBuffer(delta).length,
-          }},
-          (err, delta) => {
-            if (err) {
-              console.error("An error occurred:", err);
-              process.exitCode = 1;
-            }
-            if (delta) {
-              udpSend(delta, udpAddress, udpPort);
-            }
+            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBufferData.length
           }
-        );
-      }
-    );
+        },
+        (err, compressedDelta) => {
+          if (err) {
+            app.error(`Brotli compression error (stage 1): ${err.message}`);
+            return;
+          }
+          try {
+            const encryptedDelta = encrypt(deltaBuffer(compressedDelta), secretKey);
+            zlib.brotliCompress(
+              deltaBuffer(encryptedDelta),
+              {
+                params: {
+                  [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
+                  [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+                  [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBuffer(encryptedDelta).length
+                }
+              },
+              (err, finalDelta) => {
+                if (err) {
+                  app.error(`Brotli compression error (stage 2): ${err.message}`);
+                  return;
+                }
+                if (finalDelta) {
+                  udpSend(finalDelta, udpAddress, udpPort);
+                }
+              }
+            );
+          } catch (encryptError) {
+            app.error(`Encryption error: ${encryptError.message}`);
+          }
+        }
+      );
+    } catch (error) {
+      app.error(`packCrypt error: ${error.message}`);
+    }
   }
 
+  /**
+   * Decompresses, decrypts, and processes received UDP data
+   * @param {Buffer} delta - Encrypted and compressed delta data
+   * @param {string} secretKey - 32-character decryption key
+   */
   function unpackDecrypt(delta, secretKey) {
-    zlib.brotliDecompress(delta, (err, delta) => {
+    zlib.brotliDecompress(delta, (err, decompressedDelta) => {
       if (err) {
-        console.error("An error occurred:", err);
-        process.exitCode = 1;
+        app.error(`Brotli decompression error (stage 1): ${err.message}`);
+        return;
       }
-      delta = decrypt(JSON.parse(delta.toString("utf8")), secretKey);
-      zlib.brotliDecompress(Buffer.from(JSON.parse(delta)), (err, delta) => {
-        if (err) {
-          console.error("An error occurred:", err);
-          process.exitCode = 1;
-        }
-        const jsonContent = JSON.parse(
-          JSON.stringify(JSON.parse(delta.toString()))
-        );
-        const numbers = Object.keys(jsonContent).length;
-        for (let i = 0; i < numbers; i++) {
-          const jsonKey = Object.keys(jsonContent)[i];
-          const delta = jsonContent[jsonKey];
-          app.handleMessage("", delta);
-          app.debug(JSON.stringify(delta, null, 2));
-        }
-      });
+      try {
+        const encryptedData = JSON.parse(decompressedDelta.toString("utf8"));
+        const decryptedData = decrypt(encryptedData, secretKey);
+
+        zlib.brotliDecompress(Buffer.from(JSON.parse(decryptedData)), (err, finalDelta) => {
+          if (err) {
+            app.error(`Brotli decompression error (stage 2): ${err.message}`);
+            return;
+          }
+          try {
+            const jsonContent = JSON.parse(finalDelta.toString());
+            const deltaCount = Object.keys(jsonContent).length;
+
+            for (let i = 0; i < deltaCount; i++) {
+              const jsonKey = Object.keys(jsonContent)[i];
+              const deltaMessage = jsonContent[jsonKey];
+              app.handleMessage("", deltaMessage);
+              app.debug(JSON.stringify(deltaMessage, null, 2));
+            }
+          } catch (parseError) {
+            app.error(`JSON parse error: ${parseError.message}`);
+          }
+        });
+      } catch (decryptError) {
+        app.error(`Decryption error: ${decryptError.message}`);
+      }
     });
   }
 
+  /**
+   * Sends a message via UDP
+   * @param {Buffer} message - Message to send
+   * @param {string} host - Destination host address
+   * @param {number} port - Destination port number
+   */
   function udpSend(message, host, port) {
     socketUdp.send(message, port, host, (error) => {
       if (error) {
-        console.error();
+        app.error(`UDP send error to ${host}:${port} - ${error.message}`);
       }
     });
   }
@@ -377,21 +446,24 @@ module.exports = function createPlugin(app) {
   plugin.schema = {
     type: "object",
     title: "SignalK Data Connector Configuration",
-    description: "Configure encrypted UDP data transmission between SignalK units with compression and connectivity monitoring",
+    description:
+      "Configure encrypted UDP data transmission between SignalK units with compression and connectivity monitoring",
     required: ["udpPort", "secretKey"],
     properties: {
       serverType: {
         type: "string",
         default: "client",
         title: "Operation Mode",
-        description: "Select the operation mode for this plugin instance. Server mode receives and processes data from clients. Client mode sends data to a server.",
+        description:
+          "Select the operation mode for this plugin instance. Server mode receives and processes data from clients. Client mode sends data to a server.",
         enum: ["server", "client"],
         enumNames: ["Server Mode - Receive Data", "Client Mode - Send Data"]
       },
       udpPort: {
         type: "number",
         title: "UDP Port Number",
-        description: "The UDP port used for data transmission. Both server and client must use the same port number.",
+        description:
+          "The UDP port used for data transmission. Both server and client must use the same port number.",
         default: 4446,
         minimum: 1024,
         maximum: 65535,
@@ -400,7 +472,8 @@ module.exports = function createPlugin(app) {
       secretKey: {
         type: "string",
         title: "Encryption Secret Key",
-        description: "A 32-character secret key used for AES encryption/decryption. Both server and client must use the identical key for secure communication.",
+        description:
+          "A 32-character secret key used for AES encryption/decryption. Both server and client must use the identical key for secure communication.",
         minLength: 32,
         maxLength: 32,
         pattern: "^[A-Za-z0-9!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>\\/?]{32}$",
@@ -410,7 +483,8 @@ module.exports = function createPlugin(app) {
         type: "integer",
         default: 1000,
         title: "Configuration Refresh Rate",
-        description: "How often to check for changes in subscription configuration files (milliseconds). Lower values provide faster config updates but use more resources.",
+        description:
+          "How often to check for changes in subscription configuration files (milliseconds). Lower values provide faster config updates but use more resources.",
         minimum: 100,
         maximum: 60000,
         examples: [500, 1000, 2000, 5000]
@@ -419,7 +493,8 @@ module.exports = function createPlugin(app) {
         type: "integer",
         default: 60,
         title: "Vessel Data Broadcast Interval",
-        description: "How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds.",
+        description:
+          "How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds.",
         minimum: 10,
         maximum: 3600,
         examples: [30, 60, 120, 300]
@@ -427,23 +502,28 @@ module.exports = function createPlugin(app) {
       udpAddress: {
         type: "string",
         title: "Destination Server Address",
-        description: "IP address or hostname of the SignalK server to send data to. Use the server's network address.",
+        description:
+          "IP address or hostname of the SignalK server to send data to. Use the server's network address.",
         default: "127.0.0.1",
-        pattern: "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
+        pattern:
+          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
         examples: ["192.168.1.100", "10.0.0.50", "signalk.mydomain.com", "localhost"]
       },
       testAddress: {
         type: "string",
         title: "Connectivity Test Target",
-        description: "IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service (e.g., router, DNS server, or web server).",
+        description:
+          "IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service (e.g., router, DNS server, or web server).",
         default: "127.0.0.1",
-        pattern: "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
+        pattern:
+          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
         examples: ["8.8.8.8", "192.168.1.1", "google.com", "1.1.1.1"]
       },
       testPort: {
         type: "number",
         title: "Connectivity Test Port",
-        description: "TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS), 22 (SSH).",
+        description:
+          "TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS), 22 (SSH).",
         default: 80,
         minimum: 1,
         maximum: 65535,
@@ -452,7 +532,8 @@ module.exports = function createPlugin(app) {
       pingIntervalTime: {
         type: "number",
         title: "Connectivity Check Interval",
-        description: "How often to test network connectivity (minutes). Data transmission is paused when connectivity fails. Recommended: 1-5 minutes for reliable networks.",
+        description:
+          "How often to test network connectivity (minutes). Data transmission is paused when connectivity fails. Recommended: 1-5 minutes for reliable networks.",
         default: 1,
         minimum: 0.1,
         maximum: 60,
@@ -468,23 +549,29 @@ module.exports = function createPlugin(app) {
     then: {
       required: ["udpPort", "secretKey", "udpAddress", "testAddress", "testPort"],
       properties: {
-        subscribeReadIntervalTime: { 
-          description: "CLIENT ONLY: How often to check for changes in subscription configuration files (milliseconds). Lower values provide faster config updates but use more resources."
+        subscribeReadIntervalTime: {
+          description:
+            "CLIENT ONLY: How often to check for changes in subscription configuration files (milliseconds). Lower values provide faster config updates but use more resources."
         },
-        helloMessageSender: { 
-          description: "CLIENT ONLY: How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds."
+        helloMessageSender: {
+          description:
+            "CLIENT ONLY: How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds."
         },
-        udpAddress: { 
-          description: "CLIENT ONLY: IP address or hostname of the SignalK server to send data to. Use the server's network address."
+        udpAddress: {
+          description:
+            "CLIENT ONLY: IP address or hostname of the SignalK server to send data to. Use the server's network address."
         },
-        testAddress: { 
-          description: "CLIENT ONLY: IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service."
+        testAddress: {
+          description:
+            "CLIENT ONLY: IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service."
         },
-        testPort: { 
-          description: "CLIENT ONLY: TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS)."
+        testPort: {
+          description:
+            "CLIENT ONLY: TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS)."
         },
-        pingIntervalTime: { 
-          description: "CLIENT ONLY: How often to test network connectivity (minutes). Data transmission is paused when connectivity fails."
+        pingIntervalTime: {
+          description:
+            "CLIENT ONLY: How often to test network connectivity (minutes). Data transmission is paused when connectivity fails."
         }
       }
     },
