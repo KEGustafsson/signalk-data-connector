@@ -205,7 +205,7 @@ module.exports = function createPlugin(app) {
             }
           ]
         };
-        app.debug("Sending hello message");
+        app.debug(JSON.stringify(fixedDelta, null, 2));
         deltasFixed.push(fixedDelta);
         packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
         deltasFixed = [];
@@ -277,11 +277,10 @@ module.exports = function createPlugin(app) {
                 }
 
                 deltas.push(delta);
+                setImmediate(() => app.reportOutputMessages());
                 if (timer) {
                   packCrypt(deltas, options.secretKey, options.udpAddress, options.udpPort);
-                  if (app.debug && deltas.length > 0) {
-                    app.debug(`Sending ${deltas.length} deltas`);
-                  }
+                  app.debug(JSON.stringify(deltas, null, 2));
                   deltas = [];
                   timer = false;
                 }
