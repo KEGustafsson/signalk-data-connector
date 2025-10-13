@@ -39,6 +39,9 @@ module.exports = function createPlugin(app) {
   let deltaTimerFile;
   let subscriptionFile;
 
+  // Track server mode status
+  let isServerMode = false;
+
   // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
 
@@ -101,6 +104,57 @@ module.exports = function createPlugin(app) {
     }
   }
 
+  // Register web routes - needs to be defined before start() is called
+  plugin.registerWithRouter = (router) => {
+    // Only register routes if in client mode
+    router.get("/config/:filename", async (req, res) => {
+      // Check if running in server mode
+      if (isServerMode) {
+        return res.status(404).json({ error: "Not available in server mode" });
+      }
+
+      // Check if persistent storage has been initialized
+      if (!deltaTimerFile || !subscriptionFile) {
+        return res.status(503).json({ error: "Plugin not fully initialized" });
+      }
+
+      const filename = req.params.filename;
+      if (!["delta_timer.json", "subscription.json"].includes(filename)) {
+        return res.status(400).json({ error: "Invalid filename" });
+      }
+
+      const filePath = filename === "delta_timer.json" ? deltaTimerFile : subscriptionFile;
+      res.contentType("application/json");
+      const config = await loadConfigFile(filePath);
+      res.send(JSON.stringify(config || {}));
+    });
+
+    router.post("/config/:filename", async (req, res) => {
+      // Check if running in server mode
+      if (isServerMode) {
+        return res.status(404).json({ error: "Not available in server mode" });
+      }
+
+      // Check if persistent storage has been initialized
+      if (!deltaTimerFile || !subscriptionFile) {
+        return res.status(503).json({ error: "Plugin not fully initialized" });
+      }
+
+      const filename = req.params.filename;
+      if (!["delta_timer.json", "subscription.json"].includes(filename)) {
+        return res.status(400).json({ error: "Invalid filename" });
+      }
+
+      const filePath = filename === "delta_timer.json" ? deltaTimerFile : subscriptionFile;
+      const success = await saveConfigFile(filePath, req.body);
+      if (success) {
+        res.status(200).send("OK");
+      } else {
+        res.status(500).send("Failed to save configuration");
+      }
+    });
+  };
+
   plugin.start = async function (options) {
     // Validate required options
     if (!options.secretKey || options.secretKey.length !== 32) {
@@ -116,6 +170,7 @@ module.exports = function createPlugin(app) {
 
     if (options.serverType === true || options.serverType === "server") {
       // Server section
+      isServerMode = true;
       app.debug("SignalK data connector server started");
       socketUdp = dgram.createSocket({ type: "udp4", reuseAddr: true });
       socketUdp.bind(options.udpPort);
@@ -124,37 +179,9 @@ module.exports = function createPlugin(app) {
       });
     } else {
       // Client section
+      isServerMode = false;
       // Initialize persistent storage (only needed in client mode)
       await initializePersistentStorage();
-
-      plugin.registerWithRouter = (router) => {
-        router.get("/config/:filename", async (req, res) => {
-          const filename = req.params.filename;
-          if (!["delta_timer.json", "subscription.json"].includes(filename)) {
-            return res.status(400).json({ error: "Invalid filename" });
-          }
-
-          const filePath = filename === "delta_timer.json" ? deltaTimerFile : subscriptionFile;
-          res.contentType("application/json");
-          const config = await loadConfigFile(filePath);
-          res.send(JSON.stringify(config || {}));
-        });
-
-        router.post("/config/:filename", async (req, res) => {
-          const filename = req.params.filename;
-          if (!["delta_timer.json", "subscription.json"].includes(filename)) {
-            return res.status(400).json({ error: "Invalid filename" });
-          }
-
-          const filePath = filename === "delta_timer.json" ? deltaTimerFile : subscriptionFile;
-          const success = await saveConfigFile(filePath, req.body);
-          if (success) {
-            res.status(200).send("OK");
-          } else {
-            res.status(500).send("Failed to save configuration");
-          }
-        });
-      };
 
       // Load initial delta timer configuration
       const deltaTimerTimeFile = await loadConfigFile(deltaTimerFile);
