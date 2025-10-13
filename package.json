@@ -1,6 +1,6 @@
 {
   "name": "signalk-data-connector",
-  "version": "1.0.0-beta.6",
+  "version": "1.0.0-beta.7",
   "description": "SignalK plugin for encrypted UDP data transmission with webapp configuration",
   "main": "index.js",
   "keywords": [
@@ -33,7 +33,7 @@
     "babel-loader": "^9.1.2",
     "copy-webpack-plugin": "^13.0.1",
     "css-loader": "^6.8.1",
-    "eslint": "^8.57.1",
+    "eslint": "~8.57.1",
     "html-webpack-plugin": "^5.5.3",
     "jest": "^29.7.0",
     "mini-css-extract-plugin": "^2.7.6",
@@ -57,6 +57,11 @@
       "**/__tests__/**/*.js",
       "**/*.test.js",
       "**/*.spec.js"
+    ],
+    "transform": {},
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/public/"
     ]
   }
 }

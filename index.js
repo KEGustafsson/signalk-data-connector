@@ -27,6 +27,7 @@ module.exports = function createPlugin(app) {
   let helloMessageSender;
   let subscribeRead;
   let pingTimeout;
+  let pingMonitor;
   let deltaTimer;
   let deltaTimerTime = DEFAULT_DELTA_TIMER;
   let deltaTimerTimeNew;
@@ -204,7 +205,7 @@ module.exports = function createPlugin(app) {
             }
           ]
         };
-        app.debug(JSON.stringify(fixedDelta, null, 2));
+        app.debug("Sending hello message");
         deltasFixed.push(fixedDelta);
         packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
         deltasFixed = [];
@@ -214,9 +215,10 @@ module.exports = function createPlugin(app) {
 
       // eslint-disable-next-line no-inner-declarations
       function deltaTimerfunc() {
+        clearTimeout(deltaTimer);
         deltaTimer = setTimeout(() => {
           timer = true;
-          deltaTimer.refresh();
+          deltaTimerfunc();
         }, deltaTimerTime);
       }
 
@@ -225,7 +227,7 @@ module.exports = function createPlugin(app) {
       deltaTimerSet = setInterval(() => {
         if (deltaTimerTime !== deltaTimerTimeNew) {
           deltaTimerTime = deltaTimerTimeNew;
-          clearInterval(deltaTimer);
+          clearTimeout(deltaTimer);
           deltaTimerfunc();
         }
       }, CONFIG_CHECK_INTERVAL);
@@ -262,12 +264,10 @@ module.exports = function createPlugin(app) {
             },
             (delta) => {
               if (readyToSend) {
-                try {
-                  if (delta.updates[0].source.sentence === "GSV") {
-                    delta = {};
-                  }
-                } catch (error) {
-                  // Ignore GSV sentence check errors - delta structure may vary
+                // Filter out GSV sentences if needed (satellite data can be verbose)
+                const isGsvSentence = delta?.updates?.[0]?.source?.sentence === "GSV";
+                if (isGsvSentence) {
+                  return; // Skip GSV sentences
                 }
 
                 // Prevent memory leak by limiting buffer size
@@ -277,10 +277,11 @@ module.exports = function createPlugin(app) {
                 }
 
                 deltas.push(delta);
-                setImmediate(() => app.reportOutputMessages());
                 if (timer) {
                   packCrypt(deltas, options.secretKey, options.udpAddress, options.udpPort);
-                  app.debug(JSON.stringify(deltas, null, 2));
+                  if (app.debug && deltas.length > 0) {
+                    app.debug(`Sending ${deltas.length} deltas`);
+                  }
                   deltas = [];
                   timer = false;
                 }
@@ -291,41 +292,53 @@ module.exports = function createPlugin(app) {
       }, options.subscribeReadIntervalTime);
 
       // Ping monitor for Client to check connection to Server / Test destination
-      const myMonitor = new Monitor({
+      pingMonitor = new Monitor({
         address: options.testAddress,
         port: options.testPort,
         interval: options.pingIntervalTime, // minutes
         protocol: "tcp"
       });
 
-      myMonitor.on("up", function (_res, _state) {
+      pingMonitor.on("up", function (_res, _state) {
         readyToSend = true;
-        pingTimeout.refresh();
+        clearTimeout(pingTimeout);
+        pingTimeout = setTimeout(
+          () => {
+            readyToSend = false;
+          },
+          options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
+        );
         app.debug("Connection monitor: up");
       });
 
-      myMonitor.on("down", function (_res, _state) {
+      pingMonitor.on("down", function (_res, _state) {
         readyToSend = false;
         app.debug("Connection monitor: down");
       });
 
-      myMonitor.on("restored", function (_res, _state) {
+      pingMonitor.on("restored", function (_res, _state) {
         readyToSend = true;
-        pingTimeout.refresh();
+        clearTimeout(pingTimeout);
+        pingTimeout = setTimeout(
+          () => {
+            readyToSend = false;
+          },
+          options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
+        );
         app.debug("Connection monitor: restored");
       });
 
-      myMonitor.on("stop", function (_res, _state) {
+      pingMonitor.on("stop", function (_res, _state) {
         readyToSend = false;
         app.debug("Connection monitor: stopped");
       });
 
-      myMonitor.on("timeout", function (_error, _res) {
+      pingMonitor.on("timeout", function (_error, _res) {
         readyToSend = false;
         app.debug("Connection monitor: timeout");
       });
 
-      myMonitor.on("error", function (error, _res) {
+      pingMonitor.on("error", function (error, _res) {
         readyToSend = false;
         if (error) {
           const errorMessage =
@@ -339,7 +352,6 @@ module.exports = function createPlugin(app) {
       pingTimeout = setTimeout(
         () => {
           readyToSend = false;
-          pingTimeout.refresh();
         },
         options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
       );
@@ -366,46 +378,43 @@ module.exports = function createPlugin(app) {
   function packCrypt(delta, secretKey, udpAddress, udpPort) {
     try {
       const deltaBufferData = deltaBuffer(delta);
-      zlib.brotliCompress(
-        deltaBufferData,
-        {
-          params: {
-            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
-            [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
-            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBufferData.length
-          }
-        },
-        (err, compressedDelta) => {
-          if (err) {
-            app.error(`Brotli compression error (stage 1): ${err.message}`);
-            return;
-          }
-          try {
-            const encryptedDelta = encrypt(deltaBuffer(compressedDelta), secretKey);
-            zlib.brotliCompress(
-              deltaBuffer(encryptedDelta),
-              {
-                params: {
-                  [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
-                  [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
-                  [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBuffer(encryptedDelta).length
-                }
-              },
-              (err, finalDelta) => {
-                if (err) {
-                  app.error(`Brotli compression error (stage 2): ${err.message}`);
-                  return;
-                }
-                if (finalDelta) {
-                  udpSend(finalDelta, udpAddress, udpPort);
-                }
-              }
-            );
-          } catch (encryptError) {
-            app.error(`Encryption error: ${encryptError.message}`);
-          }
+      const brotliOptions = {
+        params: {
+          [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
+          [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+          [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBufferData.length
         }
-      );
+      };
+
+      zlib.brotliCompress(deltaBufferData, brotliOptions, (err, compressedDelta) => {
+        if (err) {
+          app.error(`Brotli compression error (stage 1): ${err.message}`);
+          return;
+        }
+        try {
+          const encryptedDelta = encrypt(compressedDelta, secretKey);
+          const encryptedBuffer = Buffer.from(JSON.stringify(encryptedDelta), "utf8");
+          const brotliOptions2 = {
+            params: {
+              [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
+              [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+              [zlib.constants.BROTLI_PARAM_SIZE_HINT]: encryptedBuffer.length
+            }
+          };
+
+          zlib.brotliCompress(encryptedBuffer, brotliOptions2, (err, finalDelta) => {
+            if (err) {
+              app.error(`Brotli compression error (stage 2): ${err.message}`);
+              return;
+            }
+            if (finalDelta) {
+              udpSend(finalDelta, udpAddress, udpPort);
+            }
+          });
+        } catch (encryptError) {
+          app.error(`Encryption error: ${encryptError.message}`);
+        }
+      });
     } catch (error) {
       app.error(`packCrypt error: ${error.message}`);
     }
@@ -458,6 +467,10 @@ module.exports = function createPlugin(app) {
    * @param {number} port - Destination port number
    */
   function udpSend(message, host, port) {
+    if (!socketUdp) {
+      app.error("UDP socket not initialized, cannot send message");
+      return;
+    }
     socketUdp.send(message, port, host, (error) => {
       if (error) {
         app.error(`UDP send error to ${host}:${port} - ${error.message}`);
@@ -471,9 +484,13 @@ module.exports = function createPlugin(app) {
     localSubscription = null;
     clearInterval(helloMessageSender);
     clearInterval(subscribeRead);
-    clearInterval(pingTimeout);
-    clearInterval(deltaTimer);
+    clearTimeout(pingTimeout);
+    clearTimeout(deltaTimer);
     clearInterval(deltaTimerSet);
+    if (pingMonitor) {
+      pingMonitor.stop();
+      pingMonitor = null;
+    }
     if (socketUdp) {
       app.debug("SignalK data connector stopped");
       socketUdp.close();

@@ -1,5 +1,10 @@
 import "./styles.css";
 
+// Constants
+const DELTA_TIMER_MIN = 100;
+const DELTA_TIMER_MAX = 10000;
+const NOTIFICATION_TIMEOUT = 4000;
+
 class DataConnectorConfig {
   constructor() {
     this.deltaTimerConfig = null;
@@ -9,14 +14,19 @@ class DataConnectorConfig {
   }
 
   async init() {
-    await this.checkServerMode();
-    if (this.isServerMode) {
-      this.showServerModeUI();
-    } else {
-      await this.loadConfigurations();
-      this.setupEventListeners();
-      this.updateUI();
-      this.updateStatus();
+    try {
+      await this.checkServerMode();
+      if (this.isServerMode) {
+        this.showServerModeUI();
+      } else {
+        await this.loadConfigurations();
+        this.setupEventListeners();
+        this.updateUI();
+        this.updateStatus();
+      }
+    } catch (error) {
+      console.error("Initialization error:", error);
+      this.showNotification("Failed to initialize application: " + error.message, "error");
     }
   }
 
@@ -106,16 +116,30 @@ class DataConnectorConfig {
     const pathItem = document.createElement("div");
     pathItem.className = "path-item";
 
-    pathItem.innerHTML = `
-            <input type="text" value="${path}" placeholder="navigation.position" class="path-input">
-            <button type="button" class="btn btn-danger" onclick="this.parentElement.remove(); window.dataConnectorConfig.updateJsonFromForm();">Remove</button>
-        `;
+    // Create elements safely to prevent XSS
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = path; // Safe: value property is automatically escaped
+    input.placeholder = "navigation.position";
+    input.className = "path-input";
 
-    // Add event listener for input changes
-    pathItem.querySelector(".path-input").addEventListener("input", () => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-danger";
+    button.textContent = "Remove";
+
+    // Add event listeners
+    input.addEventListener("input", () => {
       this.updateJsonFromForm();
     });
 
+    button.addEventListener("click", () => {
+      pathItem.remove();
+      this.updateJsonFromForm();
+    });
+
+    pathItem.appendChild(input);
+    pathItem.appendChild(button);
     pathsList.appendChild(pathItem);
     this.updateJsonFromForm();
   }
@@ -161,8 +185,11 @@ class DataConnectorConfig {
   async saveDeltaTimer() {
     const deltaTimer = parseInt(document.getElementById("deltaTimer").value);
 
-    if (isNaN(deltaTimer) || deltaTimer < 100 || deltaTimer > 10000) {
-      this.showNotification("Delta timer must be between 100 and 10000 milliseconds", "error");
+    if (isNaN(deltaTimer) || deltaTimer < DELTA_TIMER_MIN || deltaTimer > DELTA_TIMER_MAX) {
+      this.showNotification(
+        `Delta timer must be between ${DELTA_TIMER_MIN} and ${DELTA_TIMER_MAX} milliseconds`,
+        "error"
+      );
       return;
     }
 
@@ -334,7 +361,7 @@ class DataConnectorConfig {
 
     setTimeout(() => {
       notification.classList.remove("show");
-    }, 4000);
+    }, NOTIFICATION_TIMEOUT);
   }
 }
 

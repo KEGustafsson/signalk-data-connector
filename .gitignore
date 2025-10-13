@@ -11,6 +11,7 @@ npm-debug.log*
 *.log
 .vscode/
 .idea/
+.claude/
 
 # Temporary files
 *.tmp
