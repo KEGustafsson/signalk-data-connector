@@ -1,6 +1,7 @@
 "use strict";
 /* eslint-disable no-undef */
 const { access, readFile, writeFile } = require("fs").promises;
+const { watch } = require("fs");
 const { join } = require("path");
 const zlib = require("node:zlib");
 const dgram = require("dgram");
@@ -11,9 +12,9 @@ module.exports = function createPlugin(app) {
   // Constants
   const DEFAULT_DELTA_TIMER = 1000; // milliseconds
   const PING_TIMEOUT_BUFFER = 10000; // milliseconds - extra buffer for ping timeout
-  const CONFIG_CHECK_INTERVAL = 1000; // milliseconds - how often to check for config changes
   const MILLISECONDS_PER_MINUTE = 60000;
   const MAX_DELTAS_BUFFER_SIZE = 1000; // prevent memory leaks
+  const FILE_WATCH_DEBOUNCE_DELAY = 300; // milliseconds - debounce delay for file watcher events
 
   const plugin = {};
   plugin.id = "signalk-data-connector";
@@ -25,13 +26,10 @@ module.exports = function createPlugin(app) {
   let socketUdp;
   let readyToSend = false;
   let helloMessageSender;
-  let subscribeRead;
   let pingTimeout;
   let pingMonitor;
   let deltaTimer;
   let deltaTimerTime = DEFAULT_DELTA_TIMER;
-  let deltaTimerTimeNew;
-  let deltaTimerSet;
   let deltas = [];
   let deltasFixed = [];
   let timer = false;
@@ -39,6 +37,12 @@ module.exports = function createPlugin(app) {
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
   let subscriptionFile;
+
+  // File system watchers for configuration files
+  let deltaTimerWatcher;
+  let subscriptionWatcher;
+  let deltaTimerDebounceTimer;
+  let subscriptionDebounceTimer;
 
   // Track server mode status
   let isServerMode = false;
@@ -102,6 +106,149 @@ module.exports = function createPlugin(app) {
         subscribe: [{ path: "*" }]
       });
       app.debug("Initialized subscription.json with default values");
+    }
+  }
+
+  /**
+   * Schedules the delta timer recursively
+   */
+  const scheduleDeltaTimer = () => {
+    clearTimeout(deltaTimer);
+    deltaTimer = setTimeout(() => {
+      timer = true;
+      scheduleDeltaTimer();
+    }, deltaTimerTime);
+  };
+
+  /**
+   * Handles delta timer configuration changes with debouncing
+   * Debouncing prevents multiple rapid file changes from triggering multiple updates
+   */
+  function handleDeltaTimerChange() {
+    clearTimeout(deltaTimerDebounceTimer);
+    deltaTimerDebounceTimer = setTimeout(async () => {
+      try {
+        const deltaTimerConfig = await loadConfigFile(deltaTimerFile);
+        if (deltaTimerConfig && deltaTimerConfig.deltaTimer) {
+          const newTimerValue = deltaTimerConfig.deltaTimer;
+
+          // Validate range (100-10000ms)
+          if (newTimerValue >= 100 && newTimerValue <= 10000) {
+            if (deltaTimerTime !== newTimerValue) {
+              deltaTimerTime = newTimerValue;
+              clearTimeout(deltaTimer);
+              scheduleDeltaTimer();
+              app.debug(`Delta timer updated to ${deltaTimerTime}ms`);
+            }
+          } else {
+            app.error(`Invalid delta timer value: ${newTimerValue}. Must be between 100 and 10000ms`);
+          }
+        }
+      } catch (err) {
+        app.error(`Error handling delta timer change: ${err.message}`);
+      }
+    }, FILE_WATCH_DEBOUNCE_DELAY);
+  }
+
+  /**
+   * Handles subscription configuration changes with debouncing
+   * Resubscribes to SignalK data streams when subscription config changes
+   */
+  function handleSubscriptionChange() {
+    clearTimeout(subscriptionDebounceTimer);
+    subscriptionDebounceTimer = setTimeout(async () => {
+      try {
+        const localSubscriptionNew = await loadConfigFile(subscriptionFile) || {
+          context: "*",
+          subscribe: [{ path: "*" }]
+        };
+
+        // Compare subscriptions (stringify is acceptable here as it's now event-driven, not polled)
+        if (JSON.stringify(localSubscriptionNew) !== JSON.stringify(localSubscription)) {
+          localSubscription = localSubscriptionNew;
+          app.debug("Subscription configuration updated");
+          app.debug(localSubscription);
+
+          // Unsubscribe from previous subscriptions
+          unsubscribes.forEach((f) => f());
+          unsubscribes = [];
+
+          // Subscribe to new configuration
+          app.subscriptionmanager.subscribe(
+            localSubscription,
+            unsubscribes,
+            (subscriptionError) => {
+              app.error("Error:" + subscriptionError);
+            },
+            (delta) => {
+              if (readyToSend) {
+                // Filter out GSV sentences if needed (satellite data can be verbose)
+                const isGsvSentence = delta?.updates?.[0]?.source?.sentence === "GSV";
+                if (isGsvSentence) {
+                  return; // Skip GSV sentences
+                }
+
+                // Prevent memory leak by limiting buffer size
+                if (deltas.length >= MAX_DELTAS_BUFFER_SIZE) {
+                  app.error(`Delta buffer overflow (${deltas.length} items), clearing buffer`);
+                  deltas = [];
+                }
+
+                deltas.push(delta);
+                setImmediate(() => app.reportOutputMessages());
+                if (timer) {
+                  packCrypt(deltas, options.secretKey, options.udpAddress, options.udpPort);
+                  app.debug(JSON.stringify(deltas, null, 2));
+                  deltas = [];
+                  timer = false;
+                }
+              }
+            }
+          );
+        }
+      } catch (err) {
+        app.error(`Error handling subscription change: ${err.message}`);
+      }
+    }, FILE_WATCH_DEBOUNCE_DELAY);
+  }
+
+  /**
+   * Sets up file system watchers for configuration files
+   * Uses fs.watch for efficient event-driven configuration reloading
+   */
+  function setupConfigWatchers() {
+    try {
+      // Watch delta_timer.json for changes
+      deltaTimerWatcher = watch(deltaTimerFile, (eventType) => {
+        if (eventType === "change") {
+          app.debug("Delta timer configuration file changed");
+          handleDeltaTimerChange();
+        }
+      });
+
+      deltaTimerWatcher.on("error", (error) => {
+        app.error(`Delta timer watcher error: ${error.message}`);
+      });
+
+      // Watch subscription.json for changes
+      subscriptionWatcher = watch(subscriptionFile, (eventType) => {
+        if (eventType === "change") {
+          app.debug("Subscription configuration file changed");
+          handleSubscriptionChange();
+        }
+      });
+
+      subscriptionWatcher.on("error", (error) => {
+        app.error(`Subscription watcher error: ${error.message}`);
+      });
+
+      // Load initial subscription configuration
+      handleSubscriptionChange();
+
+      app.debug("Configuration file watchers initialized");
+    } catch (err) {
+      app.error(`Error setting up config watchers: ${err.message}`);
+      app.error("Falling back to polling mode would require manual intervention");
     }
   }
 
@@ -187,7 +334,6 @@ module.exports = function createPlugin(app) {
       // Load initial delta timer configuration
       const deltaTimerTimeFile = await loadConfigFile(deltaTimerFile);
       deltaTimerTime = deltaTimerTimeFile ? deltaTimerTimeFile.deltaTimer : DEFAULT_DELTA_TIMER;
-      deltaTimerTimeNew = deltaTimerTime;
 
       // helloMessageSender is needed due to nature of UDP. Sending vessel information pre-defined intervals
       helloMessageSender = setInterval(() => {
@@ -213,82 +359,11 @@ module.exports = function createPlugin(app) {
 
       socketUdp = dgram.createSocket({ type: "udp4", reuseAddr: true });
 
-      // eslint-disable-next-line no-inner-declarations
-      function deltaTimerfunc() {
-        clearTimeout(deltaTimer);
-        deltaTimer = setTimeout(() => {
-          timer = true;
-          deltaTimerfunc();
-        }, deltaTimerTime);
-      }
+      // Start the delta timer
+      scheduleDeltaTimer();
 
-      deltaTimerfunc();
-
-      deltaTimerSet = setInterval(() => {
-        if (deltaTimerTime !== deltaTimerTimeNew) {
-          deltaTimerTime = deltaTimerTimeNew;
-          clearTimeout(deltaTimer);
-          deltaTimerfunc();
-        }
-      }, CONFIG_CHECK_INTERVAL);
-
-      subscribeRead = setInterval(async () => {
-        // subscription.json file contains subscription details, read from the file
-        const localSubscriptionNew = await loadConfigFile(subscriptionFile) || {
-          context: "*",
-          subscribe: [
-            {
-              path: "*"
-            }
-          ]
-        };
-
-        // delta_timer.json file contains batch reading interval details, read from the file
-        const deltaTimerTimeNewFile = await loadConfigFile(deltaTimerFile) || {
-          deltaTimer: DEFAULT_DELTA_TIMER
-        };
-
-        deltaTimerTimeNew = deltaTimerTimeNewFile.deltaTimer;
-        if (JSON.stringify(localSubscriptionNew) !== JSON.stringify(localSubscription)) {
-          localSubscription = localSubscriptionNew;
-          app.debug(localSubscription);
-
-          unsubscribes.forEach((f) => f());
-          unsubscribes = [];
-
-          app.subscriptionmanager.subscribe(
-            localSubscription,
-            unsubscribes,
-            (subscriptionError) => {
-              app.error("Error:" + subscriptionError);
-            },
-            (delta) => {
-              if (readyToSend) {
-                // Filter out GSV sentences if needed (satellite data can be verbose)
-                const isGsvSentence = delta?.updates?.[0]?.source?.sentence === "GSV";
-                if (isGsvSentence) {
-                  return; // Skip GSV sentences
-                }
-
-                // Prevent memory leak by limiting buffer size
-                if (deltas.length >= MAX_DELTAS_BUFFER_SIZE) {
-                  app.error(`Delta buffer overflow (${deltas.length} items), clearing buffer`);
-                  deltas = [];
-                }
-
-                deltas.push(delta);
-                setImmediate(() => app.reportOutputMessages());
-                if (timer) {
-                  packCrypt(deltas, options.secretKey, options.udpAddress, options.udpPort);
-                  app.debug(JSON.stringify(deltas, null, 2));
-                  deltas = [];
-                  timer = false;
-                }
-              }
-            }
-          );
-        }
-      }, options.subscribeReadIntervalTime);
+      // Set up file system watchers for configuration files
+      setupConfigWatchers();
 
       // Ping monitor for Client to check connection to Server / Test destination
       pingMonitor = new Monitor({
@@ -478,18 +553,37 @@ module.exports = function createPlugin(app) {
   }
 
   plugin.stop = function stop() {
+    // Unsubscribe from SignalK subscriptions
     unsubscribes.forEach((f) => f());
     unsubscribes = [];
     localSubscription = null;
+
+    // Clear intervals and timeouts
     clearInterval(helloMessageSender);
-    clearInterval(subscribeRead);
     clearTimeout(pingTimeout);
     clearTimeout(deltaTimer);
-    clearInterval(deltaTimerSet);
+    clearTimeout(deltaTimerDebounceTimer);
+    clearTimeout(subscriptionDebounceTimer);
+
+    // Stop file system watchers
+    if (deltaTimerWatcher) {
+      deltaTimerWatcher.close();
+      deltaTimerWatcher = null;
+      app.debug("Delta timer file watcher closed");
+    }
+    if (subscriptionWatcher) {
+      subscriptionWatcher.close();
+      subscriptionWatcher = null;
+      app.debug("Subscription file watcher closed");
+    }
+
+    // Stop ping monitor
     if (pingMonitor) {
       pingMonitor.stop();
       pingMonitor = null;
     }
+
+    // Close UDP socket
     if (socketUdp) {
       app.debug("SignalK data connector stopped");
       socketUdp.close();
