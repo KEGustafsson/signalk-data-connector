@@ -93,7 +93,7 @@ describe("Compression and Encryption Pipeline", () => {
 
       // Decrypt
       const decrypted = decrypt(encrypted, validSecretKey);
-      expect(decrypted).toBe(originalData);
+      expect(decrypted.toString()).toBe(originalData);
     });
 
     test("should reduce size significantly with compression + encryption", (done) => {

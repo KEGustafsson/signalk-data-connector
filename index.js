@@ -435,7 +435,7 @@ module.exports = function createPlugin(app) {
         const encryptedData = JSON.parse(decompressedDelta.toString("utf8"));
         const decryptedData = decrypt(encryptedData, secretKey);
 
-        zlib.brotliDecompress(Buffer.from(JSON.parse(decryptedData)), (err, finalDelta) => {
+        zlib.brotliDecompress(decryptedData, (err, finalDelta) => {
           if (err) {
             app.error(`Brotli decompression error (stage 2): ${err.message}`);
             return;

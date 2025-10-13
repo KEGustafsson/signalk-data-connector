@@ -67,7 +67,7 @@ describe("Crypto Module", () => {
       const encrypted = encrypt(testData, validSecretKey);
       const decrypted = decrypt(encrypted, validSecretKey);
 
-      expect(decrypted).toBe(testData);
+      expect(decrypted.toString()).toBe(testData);
     });
 
     test("should decrypt complex JSON data", () => {
@@ -80,8 +80,8 @@ describe("Crypto Module", () => {
       const encrypted = encrypt(complexData, validSecretKey);
       const decrypted = decrypt(encrypted, validSecretKey);
 
-      expect(decrypted).toBe(complexData);
-      expect(JSON.parse(decrypted)).toEqual({
+      expect(decrypted.toString()).toBe(complexData);
+      expect(JSON.parse(decrypted.toString())).toEqual({
         name: "Test",
         value: 123,
         nested: { key: "value" }
@@ -121,7 +121,7 @@ describe("Crypto Module", () => {
       const encrypted = encrypt(data, validSecretKey);
       const decrypted = decrypt(encrypted, validSecretKey);
 
-      expect(decrypted).toBe(data);
+      expect(decrypted.toString()).toBe(data);
     });
 
     test("should handle special characters", () => {
@@ -129,7 +129,7 @@ describe("Crypto Module", () => {
       const encrypted = encrypt(specialChars, validSecretKey);
       const decrypted = decrypt(encrypted, validSecretKey);
 
-      expect(decrypted).toBe(specialChars);
+      expect(decrypted.toString()).toBe(specialChars);
     });
 
     test("should handle unicode characters", () => {
@@ -137,7 +137,7 @@ describe("Crypto Module", () => {
       const encrypted = encrypt(unicode, validSecretKey);
       const decrypted = decrypt(encrypted, validSecretKey);
 
-      expect(decrypted).toBe(unicode);
+      expect(decrypted.toString()).toBe(unicode);
     });
 
     test("should handle large data", () => {
@@ -145,7 +145,7 @@ describe("Crypto Module", () => {
       const encrypted = encrypt(largeData, validSecretKey);
       const decrypted = decrypt(encrypted, validSecretKey);
 
-      expect(decrypted).toBe(largeData);
+      expect(decrypted.toString()).toBe(largeData);
     });
   });
 

@@ -32,7 +32,7 @@ const encrypt = (text, secretKey) => {
  * Decrypts data encrypted with AES-256-CTR
  * @param {{iv: string, content: string}} hash - Encrypted data with IV
  * @param {string} secretKey - 32-character secret key
- * @returns {string} Decrypted data
+ * @returns {Buffer} Decrypted data as Buffer
  * @throws {Error} If secretKey or hash structure is invalid
  */
 const decrypt = (hash, secretKey) => {
@@ -49,7 +49,7 @@ const decrypt = (hash, secretKey) => {
     decipher.update(Buffer.from(hash.content, "hex")),
     decipher.final()
   ]);
-  return decrypted.toString();
+  return decrypted;
 };
 
 module.exports = {
