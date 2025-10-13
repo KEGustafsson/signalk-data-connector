@@ -1,7 +1,7 @@
 "use strict";
 /* eslint-disable no-undef */
-const fs = require("fs");
-const path = require("path");
+const { access, readFile, writeFile } = require("fs").promises;
+const { join } = require("path");
 const zlib = require("node:zlib");
 const dgram = require("dgram");
 const { encrypt, decrypt } = require("./crypto");
@@ -35,46 +35,73 @@ module.exports = function createPlugin(app) {
   let deltasFixed = [];
   let timer = false;
 
+  // Persistent storage file paths - initialized in plugin.start
+  let deltaTimerFile;
+  let subscriptionFile;
+
   // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
 
   /**
-   * Loads a configuration file from the config directory
-   * @param {string} filename - Name of the config file to load
-   * @returns {Object|null} Parsed JSON object or null if file doesn't exist or error occurs
+   * Loads a configuration file from persistent storage
+   * @param {string} filePath - Full path to the config file to load
+   * @returns {Promise<Object|null>} Parsed JSON object or null if file doesn't exist or error occurs
    */
-  function loadConfigFile(filename) {
-    const filePath = path.join(__dirname, "config", filename);
+  async function loadConfigFile(filePath) {
     try {
-      if (fs.existsSync(filePath)) {
-        return JSON.parse(fs.readFileSync(filePath, "utf8"));
-      }
+      await access(filePath);
+      const content = await readFile(filePath, "utf-8");
+      return JSON.parse(content);
     } catch (err) {
-      app.error(`Error loading ${filename}: ${err.message}`);
+      app.debug(`Config file not found or error loading ${filePath}: ${err.message}`);
+      return null;
     }
-    return null;
   }
 
   /**
-   * Saves configuration data to a file in the config directory
-   * @param {string} filename - Name of the config file to save
+   * Saves configuration data to persistent storage
+   * @param {string} filePath - Full path to the config file to save
    * @param {Object} data - Configuration data to save
-   * @returns {boolean} True if save was successful, false otherwise
+   * @returns {Promise<boolean>} True if save was successful, false otherwise
    */
-  function saveConfigFile(filename, data) {
-    const configDir = path.join(__dirname, "config");
-    const filePath = path.join(configDir, filename);
-
+  async function saveConfigFile(filePath, data) {
     try {
-      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+      await writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
+      app.debug(`Configuration saved to ${filePath}`);
       return true;
     } catch (err) {
-      app.error(`Error saving ${filename}: ${err.message}`);
+      app.error(`Error saving ${filePath}: ${err.message}`);
       return false;
     }
   }
 
-  plugin.start = function (options) {
+  /**
+   * Initializes persistent storage files with default values if they don't exist
+   * @returns {Promise<void>}
+   */
+  async function initializePersistentStorage() {
+    deltaTimerFile = join(app.getDataDirPath(), "delta_timer.json");
+    subscriptionFile = join(app.getDataDirPath(), "subscription.json");
+
+    // Initialize delta timer file
+    const deltaTimerData = await loadConfigFile(deltaTimerFile);
+    if (!deltaTimerData) {
+      await saveConfigFile(deltaTimerFile, { deltaTimer: DEFAULT_DELTA_TIMER });
+      app.debug("Initialized delta_timer.json with default values");
+    }
+
+    // Initialize subscription file
+    const subscriptionData = await loadConfigFile(subscriptionFile);
+    if (!subscriptionData) {
+      await saveConfigFile(subscriptionFile, {
+        context: "*",
+        subscribe: [{ path: "*" }]
+      });
+      app.debug("Initialized subscription.json with default values");
+    }
+  }
+
+  plugin.start = async function (options) {
     // Validate required options
     if (!options.secretKey || options.secretKey.length !== 32) {
       app.error("Secret key must be exactly 32 characters");
@@ -97,25 +124,30 @@ module.exports = function createPlugin(app) {
       });
     } else {
       // Client section
+      // Initialize persistent storage (only needed in client mode)
+      await initializePersistentStorage();
+
       plugin.registerWithRouter = (router) => {
-        router.get("/config/:filename", (req, res) => {
+        router.get("/config/:filename", async (req, res) => {
           const filename = req.params.filename;
           if (!["delta_timer.json", "subscription.json"].includes(filename)) {
             return res.status(400).json({ error: "Invalid filename" });
           }
 
+          const filePath = filename === "delta_timer.json" ? deltaTimerFile : subscriptionFile;
           res.contentType("application/json");
-          const config = loadConfigFile(filename);
+          const config = await loadConfigFile(filePath);
           res.send(JSON.stringify(config || {}));
         });
 
-        router.post("/config/:filename", (req, res) => {
+        router.post("/config/:filename", async (req, res) => {
           const filename = req.params.filename;
           if (!["delta_timer.json", "subscription.json"].includes(filename)) {
             return res.status(400).json({ error: "Invalid filename" });
           }
 
-          const success = saveConfigFile(filename, req.body);
+          const filePath = filename === "delta_timer.json" ? deltaTimerFile : subscriptionFile;
+          const success = await saveConfigFile(filePath, req.body);
           if (success) {
             res.status(200).send("OK");
           } else {
@@ -124,17 +156,9 @@ module.exports = function createPlugin(app) {
         });
       };
 
-      let deltaTimerTimeFile;
-      try {
-        deltaTimerTimeFile = JSON.parse(
-          fs.readFileSync(path.join(__dirname, "config", "delta_timer.json"))
-        );
-      } catch (error) {
-        deltaTimerTimeFile = {
-          deltaTimer: DEFAULT_DELTA_TIMER
-        };
-      }
-      deltaTimerTime = deltaTimerTimeFile.deltaTimer;
+      // Load initial delta timer configuration
+      const deltaTimerTimeFile = await loadConfigFile(deltaTimerFile);
+      deltaTimerTime = deltaTimerTimeFile ? deltaTimerTimeFile.deltaTimer : DEFAULT_DELTA_TIMER;
       deltaTimerTimeNew = deltaTimerTime;
 
       // helloMessageSender is needed due to nature of UDP. Sending vessel information pre-defined intervals
@@ -179,34 +203,21 @@ module.exports = function createPlugin(app) {
         }
       }, CONFIG_CHECK_INTERVAL);
 
-      subscribeRead = setInterval(() => {
+      subscribeRead = setInterval(async () => {
         // subscription.json file contains subscription details, read from the file
-        let localSubscriptionNew;
-        try {
-          localSubscriptionNew = JSON.parse(
-            fs.readFileSync(path.join(__dirname, "config", "subscription.json"))
-          );
-        } catch (error) {
-          localSubscriptionNew = {
-            context: "*",
-            subscribe: [
-              {
-                path: "*"
-              }
-            ]
-          };
-        }
+        const localSubscriptionNew = await loadConfigFile(subscriptionFile) || {
+          context: "*",
+          subscribe: [
+            {
+              path: "*"
+            }
+          ]
+        };
+
         // delta_timer.json file contains batch reading interval details, read from the file
-        let deltaTimerTimeNewFile;
-        try {
-          deltaTimerTimeNewFile = JSON.parse(
-            fs.readFileSync(path.join(__dirname, "config", "delta_timer.json"))
-          );
-        } catch (error) {
-          deltaTimerTimeNewFile = {
-            deltaTimer: DEFAULT_DELTA_TIMER
-          };
-        }
+        const deltaTimerTimeNewFile = await loadConfigFile(deltaTimerFile) || {
+          deltaTimer: DEFAULT_DELTA_TIMER
+        };
 
         deltaTimerTimeNew = deltaTimerTimeNewFile.deltaTimer;
         if (JSON.stringify(localSubscriptionNew) !== JSON.stringify(localSubscription)) {
