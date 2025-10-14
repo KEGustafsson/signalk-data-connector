@@ -3,6 +3,7 @@ node_modules/
 src/
 webpack.config.js
 .babelrc
+.claude/
 
 # Configuration examples
 config-examples/

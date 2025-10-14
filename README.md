@@ -1,105 +1,97 @@
-# SignalK Data Connector with Configuration Webapp
+# SignalK Data Connector
 
-A SignalK plugin for secure, encrypted UDP data transmission with compression, featuring a modern web-based configuration interface.
+A SignalK plugin for secure, encrypted UDP data transmission with dual-layer Brotli compression.
+
+[![Tests](https://img.shields.io/badge/tests-74%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen)](https://nodejs.org/)
 
 ![Data Connector Concept](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/dataconnectorconcept.jpg)
 
 ## Features
 
-- **Encrypted UDP Data Transmission**: AES-256 encryption with Brotli compression
-- **Client/Server Mode**: Can operate as either data sender (client) or receiver (server)
-- **Configurable Delta Timer**: Control data collection frequency
-- **Flexible Subscriptions**: Subscribe to specific SignalK data paths
-- **Modern Web UI**: Responsive configuration interface with custom icon
-- **Real-time Configuration**: Edit settings without server restart
-- **Webpack Build System**: Modern build pipeline with asset versioning and source maps
-- **Connectivity Monitoring**: Optional ping monitoring for client connections
+- **AES-256-CTR Encryption**: Unique IV per message
+- **Dual-Layer Brotli Compression**: 70% bandwidth reduction vs WebSocket
+- **Client/Server Modes**: Sender or receiver operation
+- **Real-time Configuration**: Web-based UI, no restart required
+- **Connectivity Monitoring**: TCP ping with automatic reconnection
+- **Memory Safe**: Automatic buffer management and resource cleanup
 
 ## Architecture
 
-The plugin implements a multi-layer compression and encryption system:
+### Client (Sender)
+```
+Collect → Compress (Brotli) → Encrypt (AES-256) → Compress (Brotli) → UDP Send
+```
 
-### Client (Data Sender)
-1. Collect SignalK deltas over configured time period
-2. Compress JSON data with Brotli
-3. Encrypt with AES-256
-4. Compress encrypted data with Brotli again
-5. Send via UDP
+### Server (Receiver)
+```
+UDP Receive → Decompress → Decrypt → Decompress → Forward to SignalK
+```
 
-### Server (Data Receiver)
-1. Receive UDP packet
-2. Decompress outer Brotli layer
-3. Decrypt with AES-256
-4. Decompress inner Brotli layer
-5. Forward deltas to SignalK server
+## Installation
 
-## Plugin Settings & Usage
+```bash
+cd ~/.signalk/node_modules/
+git clone https://github.com/KEGustafsson/signalk-data-connector.git
+cd signalk-data-connector
+npm install
+npm run build
+```
 
-### Server Setup (Data Receiver)
-1. Set mode to "server"
-2. Configure UDP port
+Restart SignalK server and configure via: Admin UI → Plugin Config → Signal K Data Connector
+
+## Configuration
+
+### Server Mode (Receiver)
+
+1. Set mode to **server**
+2. Configure UDP port (1024-65535)
 3. Set 32-character encryption key
-4. Received data will be automatically forwarded to SignalK
 
-### Client Setup (Data Sender)
-1. Set mode to "client"
-2. Configure server IP address and UDP port
-3. Set the same 32-character encryption key as server
-4. Configure subscription paths for data to send (WebApp)
-5. Adjust delta timer for optimal performance (WebApp)
-6. Optional connection monitoring, ping
+### Client Mode (Sender)
 
-## Webapps - Data Connector Configuration (Client)
+1. Set mode to **client**
+2. Configure:
+   - Server IP address and UDP port
+   - Same 32-character encryption key as server
+   - Test address and port for connectivity monitoring
+   - Hello message interval (seconds)
+   - Ping interval (minutes)
 
-### Delta Timer Configuration
-Controls how frequently deltas are collected and sent:
+3. Use web UI to configure:
+   - Delta timer (100-10000ms)
+   - Subscription paths
+
+### Web UI Configuration
+
+Access via: `http://[signalk-server]:3000/plugins/signalk-data-connector`
+
+**Delta Timer** (`delta_timer.json`):
 ```json
 {
   "deltaTimer": 1000
 }
 ```
-- `deltaTimer`: Time in milliseconds (100-10000)
-- Lower values = more frequent updates, higher bandwidth
-- Higher values = better compression ratio, lower bandwidth
+- Lower values: More frequent updates, higher bandwidth
+- Higher values: Better compression, lower bandwidth
 
-### Subscription Configuration
-Defines which SignalK data to subscribe to:
+**Subscribe data:**
 ```json
 {
   "context": "*",
-  "subscribe": [
-    {
-      "path": "navigation.position"
-    },
-    {
-      "path": "navigation.speedOverGround"
-    }
-  ]
-}
-```
-```json
-{
-  "context": "*",
-  "subscribe": [
-    {
-      "path": "*"
-    }
-  ]
+  "subscribe": [{ "path": "*" }]
 }
 ```
 
-- `context`: SignalK context (e.g., "vessels.self", "*")
-- `subscribe`: Array of subscription paths
+### API Endpoints
 
-### Performance Tuning
+- `GET /plugins/signalk-data-connector/config/:filename` - Load configuration
+- `POST /plugins/signalk-data-connector/config/:filename` - Save configuration
 
-**For High-Packed Data:**
-- Set delta timer to 1000ms
-- Good compression ratio
+Valid filenames: `delta_timer.json`, `subscription.json`
 
-**For Low-Latency Applications:**
-- Set delta timer to 100ms
-- Faster updates but less compression
+## Performance
 
 ### Data Rate Comparison
 
@@ -114,102 +106,116 @@ The following chart demonstrates the significant bandwidth savings achieved by t
 
 The encrypted & compressed UDP approach provides **70% bandwidth reduction** compared to WebSocket connections while maintaining data integrity through AES-256 encryption.
 
-## Development
-
-### Building the Webapp
-```bash
-# Development build with watching (creates unversioned files)
-npm run dev
-
-# Production build (creates versioned files with contenthash)
-npm run build
-```
-
-The build process uses Webpack 5 with:
-- Babel for ES6+ transpilation
-- CSS extraction and processing
-- Asset versioning for cache busting
-- Source maps for debugging
-- Automatic cleaning of output directory
-
-## Installation
-
-1. Clone or download this repository to your SignalK plugins directory:
-```bash
-cd ~/.signalk/node_modules/
-git clone https://github.com/KEGustafsson/signalk-data-connector.git
-```
-
-2. Install dependencies:
-```bash
-cd signalk-data-connector
-npm install
-```
-
-3. Build the webapp:
-```bash
-npm run build
-```
-
-4. Restart your SignalK server
-
-### API Endpoints
-
-The plugin exposes REST endpoints for configuration:
-
-- `GET /plugins/signalk-data-connector/config/:filename` - Load configuration
-- `POST /plugins/signalk-data-connector/config/:filename` - Save configuration
-
 ## Security
 
-- Uses AES-256 encryption for all data transmission
-- Requires 32-character shared secret key
-- Data is compressed before encryption for additional security
-- UDP transmission for performance (no connection state)
+- **AES-256-CTR** with unique IV per message
+- **Input validation** on all configuration parameters
+- **XSS protection** in web UI
+- **No credential storage**
+- **Stateless UDP** protocol
+
+### Secret Key Requirements
+
+- Exactly 32 characters
+- Alphanumeric and special characters allowed
+- Must match on both client and server
+
+**Generate secure key:**
+```bash
+openssl rand -base64 32 | cut -c1-32
+```
+
+### Best Practices
+
+1. Use strong, randomly generated keys
+2. Never commit keys to version control
+3. Rotate keys periodically
+4. Monitor logs for connection issues
+5. Use firewall rules to restrict UDP access
 
 ## Troubleshooting
 
-### Common Issues
+### Plugin Not Loading
+- Verify `npm install` completed successfully
+- Check SignalK server logs for errors
+- Ensure plugin directory is correct
 
-1. **Plugin not loading**
-   - Check that all dependencies are installed
-   - Verify the plugin is in the correct directory
-   - Check SignalK server logs for errors
+### Web UI Not Accessible
+- Run `npm run build` to generate UI files
+- Check `public/` directory exists with files
+- Verify SignalK is serving plugin static files
 
-2. **Webapp not accessible**
-   - Ensure the webapp was built (`npm run build`)
-   - Check that the `public/` directory contains built files
-   - Verify SignalK server is serving plugin static files
+### No Data Transmission
+- Confirm matching encryption keys on client and server
+- Check UDP port configuration
+- Verify firewall allows UDP traffic on configured port
+- Confirm subscription paths are valid SignalK paths
+- Enable debug logging to see detailed operations
 
-3. **No data transmission**
-   - Verify both client and server use the same encryption key
-   - Check UDP port configuration and firewall settings
-   - Confirm subscription paths are valid
+### Poor Performance
+- Increase delta timer for better compression
+- Verify sufficient data is being collected
+- Check network latency and packet loss
 
-4. **Poor compression performance**
-   - Increase delta timer for better compression ratios
-   - Verify Brotli compression is working
-   - Check that sufficient data is being collected
+### Debug Logging
 
-### Logging
+Enable in SignalK plugin settings to see:
+- Connection monitor status
+- Configuration file changes
+- Delta transmission statistics
+- Error messages with context
 
-Enable plugin debug logging in SignalK settings to see detailed operation information.
+## Development
+
+### Build Commands
+
+```bash
+npm run dev          # Development build with watch mode
+npm run build        # Production build with versioning
+npm test             # Run test suite (74 tests)
+npm run test:watch   # Run tests in watch mode
+npm run test:coverage # Generate coverage report
+npm run lint         # Check code style
+npm run lint:fix     # Auto-fix linting issues
+npm run format       # Format code with Prettier
+```
+
+### Project Structure
+
+```
+signalk-data-connector/
+├── index.js              # Main plugin
+├── crypto.js             # Encryption module
+├── webpack.config.js     # Build configuration
+├── src/webapp/           # Web UI source
+│   ├── index.js
+│   ├── index.html
+│   └── styles.css
+├── __tests__/            # Test suite
+└── public/               # Built UI files
+```
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Build and test the webapp (`npm run build`)
-5. Submit a pull request
+2. Create feature branch: `git checkout -b feature/name`
+3. Make changes and add tests
+4. Run `npm test` and `npm run lint` (must pass)
+5. Run `npm run build` (must succeed)
+6. Commit with clear messages
+7. Submit pull request
+
+**Requirements:**
+- All tests must pass
+- No ESLint errors
+- Code formatted with Prettier
+- JSDoc comments for public functions
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License - Copyright (c) 2024 Karl-Erik Gustafsson
 
 ## Support
 
-For issues and questions:
-- Create an issue on GitHub
-- Check SignalK community forums
-- Review SignalK plugin documentation
+- **GitHub Issues**: https://github.com/KEGustafsson/signalk-data-connector/issues
+- **SignalK Forums**: https://signalk.org/community
