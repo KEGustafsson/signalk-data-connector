@@ -33,6 +33,7 @@ module.exports = function createPlugin(app) {
   let deltas = [];
   let deltasFixed = [];
   let timer = false;
+  let pluginOptions; // Store options for access in event handlers
 
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
@@ -197,7 +198,7 @@ module.exports = function createPlugin(app) {
                 deltas.push(delta);
                 setImmediate(() => app.reportOutputMessages());
                 if (timer) {
-                  packCrypt(deltas, options.secretKey, options.udpAddress, options.udpPort);
+                  packCrypt(deltas, pluginOptions.secretKey, pluginOptions.udpAddress, pluginOptions.udpPort);
                   app.debug(JSON.stringify(deltas, null, 2));
                   deltas = [];
                   timer = false;
@@ -304,6 +305,9 @@ module.exports = function createPlugin(app) {
   };
 
   plugin.start = async function (options) {
+    // Store options for access in event handlers
+    pluginOptions = options;
+
     // Validate required options
     if (!options.secretKey || options.secretKey.length !== 32) {
       app.error("Secret key must be exactly 32 characters");
@@ -557,6 +561,7 @@ module.exports = function createPlugin(app) {
     unsubscribes.forEach((f) => f());
     unsubscribes = [];
     localSubscription = null;
+    pluginOptions = null;
 
     // Clear intervals and timeouts
     clearInterval(helloMessageSender);
