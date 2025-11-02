@@ -481,6 +481,7 @@ module.exports = function createPlugin(app) {
       // Add error handler before binding
       socketUdp.on("error", (err) => {
         app.error(`UDP socket error: ${err.message}`);
+        readyToSend = false; // Server not ready due to error
         if (err.code === "EADDRINUSE") {
           setStatus(`Failed to start - port ${options.udpPort} already in use`);
         } else if (err.code === "EACCES") {
@@ -499,6 +500,7 @@ module.exports = function createPlugin(app) {
         const address = socketUdp.address();
         app.debug(`UDP server listening on ${address.address}:${address.port}`);
         setStatus(`Server listening on port ${address.port}`);
+        readyToSend = true; // Server is ready to receive data
       });
 
       socketUdp.on("message", (delta) => {
