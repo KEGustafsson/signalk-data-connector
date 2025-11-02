@@ -5,6 +5,7 @@ const { watch } = require("fs");
 const { join } = require("path");
 const zlib = require("node:zlib");
 const dgram = require("dgram");
+const crypto = require("crypto");
 const { encrypt, decrypt } = require("./crypto");
 const Monitor = require("ping-monitor");
 
@@ -48,8 +49,71 @@ module.exports = function createPlugin(app) {
   // Track server mode status
   let isServerMode = false;
 
+  // Track last file content hashes to prevent duplicate processing
+  let lastDeltaTimerHash = null;
+  let lastSubscriptionHash = null;
+
+  // Simple rate limiting for API endpoints
+  const rateLimitMap = new Map(); // key: IP address, value: { count, resetTime }
+  const RATE_LIMIT_WINDOW = 60000; // 1 minute
+  const RATE_LIMIT_MAX_REQUESTS = 20; // 20 requests per minute per IP
+
+  // Metrics tracking
+  const metrics = {
+    startTime: Date.now(),
+    deltasSent: 0,
+    deltasReceived: 0,
+    udpSendErrors: 0,
+    udpRetries: 0,
+    compressionErrors: 0,
+    encryptionErrors: 0,
+    subscriptionErrors: 0,
+    lastError: null,
+    lastErrorTime: null
+  };
+
   // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
+
+  /**
+   * Simple rate limiting middleware
+   * @param {string} ip - Client IP address
+   * @returns {boolean} True if request should be allowed, false if rate limit exceeded
+   */
+  function checkRateLimit(ip) {
+    const now = Date.now();
+    const clientData = rateLimitMap.get(ip);
+
+    if (!clientData || now > clientData.resetTime) {
+      // New client or window expired, reset counter
+      rateLimitMap.set(ip, {
+        count: 1,
+        resetTime: now + RATE_LIMIT_WINDOW
+      });
+      return true;
+    }
+
+    if (clientData.count >= RATE_LIMIT_MAX_REQUESTS) {
+      // Rate limit exceeded
+      return false;
+    }
+
+    // Increment counter
+    clientData.count++;
+    return true;
+  }
+
+  /**
+   * Cleanup old rate limit entries periodically
+   */
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, data] of rateLimitMap.entries()) {
+      if (now > data.resetTime) {
+        rateLimitMap.delete(ip);
+      }
+    }
+  }, RATE_LIMIT_WINDOW);
 
   /**
    * Loads a configuration file from persistent storage
@@ -112,6 +176,7 @@ module.exports = function createPlugin(app) {
 
   /**
    * Schedules the delta timer recursively
+   * @returns {void}
    */
   const scheduleDeltaTimer = () => {
     clearTimeout(deltaTimer);
@@ -124,12 +189,23 @@ module.exports = function createPlugin(app) {
   /**
    * Handles delta timer configuration changes with debouncing
    * Debouncing prevents multiple rapid file changes from triggering multiple updates
+   * @returns {void}
    */
   function handleDeltaTimerChange() {
     clearTimeout(deltaTimerDebounceTimer);
     deltaTimerDebounceTimer = setTimeout(async () => {
       try {
-        const deltaTimerConfig = await loadConfigFile(deltaTimerFile);
+        const content = await readFile(deltaTimerFile, "utf-8");
+        const contentHash = crypto.createHash("sha256").update(content).digest("hex");
+
+        // Skip if content hasn't actually changed (prevents duplicate processing)
+        if (contentHash === lastDeltaTimerHash) {
+          app.debug("Delta timer file change detected but content unchanged, skipping");
+          return;
+        }
+        lastDeltaTimerHash = contentHash;
+
+        const deltaTimerConfig = JSON.parse(content);
         if (deltaTimerConfig && deltaTimerConfig.deltaTimer) {
           const newTimerValue = deltaTimerConfig.deltaTimer;
 
@@ -154,32 +230,51 @@ module.exports = function createPlugin(app) {
   /**
    * Handles subscription configuration changes with debouncing
    * Resubscribes to SignalK data streams when subscription config changes
+   * @returns {void}
    */
   function handleSubscriptionChange() {
     clearTimeout(subscriptionDebounceTimer);
     subscriptionDebounceTimer = setTimeout(async () => {
       try {
-        const localSubscriptionNew = await loadConfigFile(subscriptionFile) || {
+        const content = await readFile(subscriptionFile, "utf-8").catch(() => null);
+
+        // If file doesn't exist, use defaults
+        const localSubscriptionNew = content ? JSON.parse(content) : {
           context: "*",
           subscribe: [{ path: "*" }]
         };
 
-        // Compare subscriptions (stringify is acceptable here as it's now event-driven, not polled)
-        if (JSON.stringify(localSubscriptionNew) !== JSON.stringify(localSubscription)) {
-          localSubscription = localSubscriptionNew;
-          app.debug("Subscription configuration updated");
-          app.debug(localSubscription);
+        // Use content hashing instead of JSON.stringify comparison
+        const configString = JSON.stringify(localSubscriptionNew);
+        const contentHash = crypto.createHash("sha256").update(configString).digest("hex");
 
-          // Unsubscribe from previous subscriptions
-          unsubscribes.forEach((f) => f());
-          unsubscribes = [];
+        // Skip if content hasn't actually changed
+        if (contentHash === lastSubscriptionHash) {
+          app.debug("Subscription file change detected but content unchanged, skipping");
+          return;
+        }
+        lastSubscriptionHash = contentHash;
 
-          // Subscribe to new configuration
+        localSubscription = localSubscriptionNew;
+        app.debug("Subscription configuration updated");
+        app.debug(localSubscription);
+
+        // Unsubscribe from previous subscriptions
+        unsubscribes.forEach((f) => f());
+        unsubscribes = [];
+
+        // Subscribe to new configuration with error recovery
+        try {
           app.subscriptionmanager.subscribe(
             localSubscription,
             unsubscribes,
             (subscriptionError) => {
-              app.error("Error:" + subscriptionError);
+              app.error("Subscription error: " + subscriptionError);
+              readyToSend = false; // Stop sending data if subscription fails
+              setStatus("Subscription error - data transmission paused");
+              metrics.subscriptionErrors++;
+              metrics.lastError = `Subscription error: ${subscriptionError}`;
+              metrics.lastErrorTime = Date.now();
             },
             (delta) => {
               if (readyToSend) {
@@ -206,6 +301,13 @@ module.exports = function createPlugin(app) {
               }
             }
           );
+        } catch (subscribeError) {
+          app.error(`Failed to subscribe: ${subscribeError.message}`);
+          readyToSend = false;
+          setStatus("Failed to subscribe - data transmission paused");
+          metrics.subscriptionErrors++;
+          metrics.lastError = `Failed to subscribe: ${subscribeError.message}`;
+          metrics.lastErrorTime = Date.now();
         }
       } catch (err) {
         app.error(`Error handling subscription change: ${err.message}`);
@@ -216,6 +318,7 @@ module.exports = function createPlugin(app) {
   /**
    * Sets up file system watchers for configuration files
    * Uses fs.watch for efficient event-driven configuration reloading
+   * @returns {void}
    */
   function setupConfigWatchers() {
     try {
@@ -255,8 +358,51 @@ module.exports = function createPlugin(app) {
 
   // Register web routes - needs to be defined before start() is called
   plugin.registerWithRouter = (router) => {
-    // Only register routes if in client mode
+    // Metrics endpoint (available in both client and server mode)
+    router.get("/metrics", (req, res) => {
+      const uptime = Date.now() - metrics.startTime;
+      const uptimeSeconds = Math.floor(uptime / 1000);
+      const uptimeMinutes = Math.floor(uptimeSeconds / 60);
+      const uptimeHours = Math.floor(uptimeMinutes / 60);
+
+      const metricsData = {
+        uptime: {
+          milliseconds: uptime,
+          seconds: uptimeSeconds,
+          formatted: `${uptimeHours}h ${uptimeMinutes % 60}m ${uptimeSeconds % 60}s`
+        },
+        mode: isServerMode ? "server" : "client",
+        stats: {
+          deltasSent: metrics.deltasSent,
+          deltasReceived: metrics.deltasReceived,
+          udpSendErrors: metrics.udpSendErrors,
+          udpRetries: metrics.udpRetries,
+          compressionErrors: metrics.compressionErrors,
+          encryptionErrors: metrics.encryptionErrors,
+          subscriptionErrors: metrics.subscriptionErrors
+        },
+        status: {
+          readyToSend: readyToSend,
+          deltasBuffered: deltas.length
+        },
+        lastError: metrics.lastError ? {
+          message: metrics.lastError,
+          timestamp: metrics.lastErrorTime,
+          timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
+        } : null
+      };
+
+      res.json(metricsData);
+    });
+
+    // Config routes (only available in client mode)
     router.get("/config/:filename", async (req, res) => {
+      // Rate limiting
+      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
+      if (!checkRateLimit(clientIp)) {
+        return res.status(429).json({ error: "Too many requests, please try again later" });
+      }
+
       // Check if running in server mode
       if (isServerMode) {
         return res.status(404).json({ error: "Not available in server mode" });
@@ -279,6 +425,12 @@ module.exports = function createPlugin(app) {
     });
 
     router.post("/config/:filename", async (req, res) => {
+      // Rate limiting
+      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
+      if (!checkRateLimit(clientIp)) {
+        return res.status(429).json({ error: "Too many requests, please try again later" });
+      }
+
       // Check if running in server mode
       if (isServerMode) {
         return res.status(404).json({ error: "Not available in server mode" });
@@ -325,9 +477,39 @@ module.exports = function createPlugin(app) {
       isServerMode = true;
       app.debug("SignalK data connector server started");
       socketUdp = dgram.createSocket({ type: "udp4", reuseAddr: true });
-      socketUdp.bind(options.udpPort);
+
+      // Add error handler before binding
+      socketUdp.on("error", (err) => {
+        app.error(`UDP socket error: ${err.message}`);
+        if (err.code === "EADDRINUSE") {
+          setStatus(`Failed to start - port ${options.udpPort} already in use`);
+        } else if (err.code === "EACCES") {
+          setStatus(`Failed to start - permission denied for port ${options.udpPort}`);
+        } else {
+          setStatus(`UDP socket error: ${err.code || err.message}`);
+        }
+        // Close the socket on error
+        if (socketUdp) {
+          socketUdp.close();
+          socketUdp = null;
+        }
+      });
+
+      socketUdp.on("listening", () => {
+        const address = socketUdp.address();
+        app.debug(`UDP server listening on ${address.address}:${address.port}`);
+        setStatus(`Server listening on port ${address.port}`);
+      });
+
       socketUdp.on("message", (delta) => {
         unpackDecrypt(delta, options.secretKey);
+      });
+
+      socketUdp.bind(options.udpPort, (err) => {
+        if (err) {
+          app.error(`Failed to bind to port ${options.udpPort}: ${err.message}`);
+          setStatus(`Failed to start - ${err.message}`);
+        }
       });
     } else {
       // Client section
@@ -362,6 +544,12 @@ module.exports = function createPlugin(app) {
       }, options.helloMessageSender * 1000);
 
       socketUdp = dgram.createSocket({ type: "udp4", reuseAddr: true });
+
+      // Add error handler for client socket
+      socketUdp.on("error", (err) => {
+        app.error(`Client UDP socket error: ${err.message}`);
+        setStatus(`UDP socket error: ${err.code || err.message}`);
+      });
 
       // Start the delta timer
       scheduleDeltaTimer();
@@ -438,7 +626,7 @@ module.exports = function createPlugin(app) {
 
   /**
    * Converts delta object to UTF-8 buffer
-   * @param {Object} delta - Delta object to convert
+   * @param {Object|Array} delta - Delta object or array to convert
    * @returns {Buffer} UTF-8 encoded buffer
    */
   function deltaBuffer(delta) {
@@ -448,10 +636,11 @@ module.exports = function createPlugin(app) {
   /**
    * Compresses, encrypts, and sends delta data via UDP
    * Based on testing, Compression -> Encryption -> Compression was the most efficient way to reduce size
-   * @param {Object} delta - Delta data to send
+   * @param {Object|Array} delta - Delta data to send
    * @param {string} secretKey - 32-character encryption key
    * @param {string} udpAddress - Destination IP address
    * @param {number} udpPort - Destination UDP port
+   * @returns {void}
    */
   function packCrypt(delta, secretKey, udpAddress, udpPort) {
     try {
@@ -467,6 +656,9 @@ module.exports = function createPlugin(app) {
       zlib.brotliCompress(deltaBufferData, brotliOptions, (err, compressedDelta) => {
         if (err) {
           app.error(`Brotli compression error (stage 1): ${err.message}`);
+          metrics.compressionErrors++;
+          metrics.lastError = `Brotli compression error (stage 1): ${err.message}`;
+          metrics.lastErrorTime = Date.now();
           return;
         }
         try {
@@ -483,14 +675,21 @@ module.exports = function createPlugin(app) {
           zlib.brotliCompress(encryptedBuffer, brotliOptions2, (err, finalDelta) => {
             if (err) {
               app.error(`Brotli compression error (stage 2): ${err.message}`);
+              metrics.compressionErrors++;
+              metrics.lastError = `Brotli compression error (stage 2): ${err.message}`;
+              metrics.lastErrorTime = Date.now();
               return;
             }
             if (finalDelta) {
               udpSend(finalDelta, udpAddress, udpPort);
+              metrics.deltasSent++;
             }
           });
         } catch (encryptError) {
           app.error(`Encryption error: ${encryptError.message}`);
+          metrics.encryptionErrors++;
+          metrics.lastError = `Encryption error: ${encryptError.message}`;
+          metrics.lastErrorTime = Date.now();
         }
       });
     } catch (error) {
@@ -502,6 +701,7 @@ module.exports = function createPlugin(app) {
    * Decompresses, decrypts, and processes received UDP data
    * @param {Buffer} delta - Encrypted and compressed delta data
    * @param {string} secretKey - 32-character decryption key
+   * @returns {void}
    */
   function unpackDecrypt(delta, secretKey) {
     zlib.brotliDecompress(delta, (err, decompressedDelta) => {
@@ -527,9 +727,12 @@ module.exports = function createPlugin(app) {
               const deltaMessage = jsonContent[jsonKey];
               app.handleMessage("", deltaMessage);
               app.debug(JSON.stringify(deltaMessage, null, 2));
+              metrics.deltasReceived++;
             }
           } catch (parseError) {
             app.error(`JSON parse error: ${parseError.message}`);
+            metrics.lastError = `JSON parse error: ${parseError.message}`;
+            metrics.lastErrorTime = Date.now();
           }
         });
       } catch (decryptError) {
@@ -539,19 +742,40 @@ module.exports = function createPlugin(app) {
   }
 
   /**
-   * Sends a message via UDP
+   * Sends a message via UDP with retry logic
    * @param {Buffer} message - Message to send
    * @param {string} host - Destination host address
    * @param {number} port - Destination port number
+   * @param {number} retryCount - Number of retries (default 0)
    */
-  function udpSend(message, host, port) {
+  function udpSend(message, host, port, retryCount = 0) {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 100; // milliseconds
+
     if (!socketUdp) {
       app.error("UDP socket not initialized, cannot send message");
       return;
     }
+
     socketUdp.send(message, port, host, (error) => {
       if (error) {
-        app.error(`UDP send error to ${host}:${port} - ${error.message}`);
+        metrics.udpSendErrors++;
+        // Check if we should retry
+        if (retryCount < MAX_RETRIES && (error.code === "EAGAIN" || error.code === "ENOBUFS")) {
+          app.debug(`UDP send error (${error.code}), retry ${retryCount + 1}/${MAX_RETRIES}`);
+          metrics.udpRetries++;
+          setTimeout(() => {
+            udpSend(message, host, port, retryCount + 1);
+          }, RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+        } else {
+          // Log error and give up
+          app.error(`UDP send error to ${host}:${port} - ${error.message} (code: ${error.code})`);
+          metrics.lastError = `UDP send error: ${error.message} (${error.code})`;
+          metrics.lastErrorTime = Date.now();
+          if (retryCount >= MAX_RETRIES) {
+            app.error("Max retries reached, packet dropped");
+          }
+        }
       }
     });
   }

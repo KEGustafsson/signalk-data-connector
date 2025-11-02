@@ -4,12 +4,14 @@ import "./styles.css";
 const DELTA_TIMER_MIN = 100;
 const DELTA_TIMER_MAX = 10000;
 const NOTIFICATION_TIMEOUT = 4000;
+const METRICS_REFRESH_INTERVAL = 5000; // 5 seconds
 
 class DataConnectorConfig {
   constructor() {
     this.deltaTimerConfig = null;
     this.subscriptionConfig = null;
     this.isServerMode = false;
+    this.metricsInterval = null;
     this.init();
   }
 
@@ -18,11 +20,15 @@ class DataConnectorConfig {
       await this.checkServerMode();
       if (this.isServerMode) {
         this.showServerModeUI();
+        await this.loadMetrics(); // Load metrics for server mode
+        this.startMetricsRefresh(); // Start auto-refresh
       } else {
         await this.loadConfigurations();
         this.setupEventListeners();
         this.updateUI();
         this.updateStatus();
+        await this.loadMetrics(); // Load metrics for client mode
+        this.startMetricsRefresh(); // Start auto-refresh
       }
     } catch (error) {
       console.error("Initialization error:", error);
@@ -250,6 +256,127 @@ class DataConnectorConfig {
     }
   }
 
+  async loadMetrics() {
+    try {
+      const response = await fetch("/plugins/signalk-data-connector/metrics");
+      if (response.ok) {
+        const metrics = await response.json();
+        this.updateMetricsDisplay(metrics);
+      }
+    } catch (error) {
+      console.error("Error loading metrics:", error.message);
+    }
+  }
+
+  startMetricsRefresh() {
+    // Clear any existing interval
+    if (this.metricsInterval) {
+      clearInterval(this.metricsInterval);
+    }
+
+    // Refresh metrics every 5 seconds
+    this.metricsInterval = setInterval(() => {
+      this.loadMetrics();
+    }, METRICS_REFRESH_INTERVAL);
+  }
+
+  updateMetricsDisplay(metrics) {
+    const metricsDiv = document.getElementById("metrics");
+    if (!metricsDiv) {
+      return;
+    }
+
+    const hasErrors = metrics.stats.udpSendErrors > 0 ||
+                      metrics.stats.compressionErrors > 0 ||
+                      metrics.stats.encryptionErrors > 0 ||
+                      metrics.stats.subscriptionErrors > 0;
+
+    let metricsHtml = `
+      <h4>📊 Performance Metrics</h4>
+      <div class="metrics-grid">
+        <div class="metric-item">
+          <div class="metric-label">Uptime</div>
+          <div class="metric-value">${metrics.uptime.formatted}</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-label">Mode</div>
+          <div class="metric-value">${metrics.mode === "server" ? "🖥️ Server" : "📱 Client"}</div>
+        </div>
+        <div class="metric-item ${metrics.status.readyToSend ? "success" : "error"}">
+          <div class="metric-label">Status</div>
+          <div class="metric-value">${metrics.status.readyToSend ? "✓ Ready" : "✗ Not Ready"}</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-label">Buffered Deltas</div>
+          <div class="metric-value">${metrics.status.deltasBuffered}</div>
+        </div>
+      </div>
+
+      <div class="metrics-stats">
+        <h5>Transmission Statistics</h5>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-label">Deltas Sent:</span>
+            <span class="stat-value">${metrics.stats.deltasSent.toLocaleString()}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Deltas Received:</span>
+            <span class="stat-value">${metrics.stats.deltasReceived.toLocaleString()}</span>
+          </div>
+          <div class="stat-item ${metrics.stats.udpSendErrors > 0 ? "error" : ""}">
+            <span class="stat-label">UDP Send Errors:</span>
+            <span class="stat-value">${metrics.stats.udpSendErrors}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">UDP Retries:</span>
+            <span class="stat-value">${metrics.stats.udpRetries}</span>
+          </div>
+          <div class="stat-item ${metrics.stats.compressionErrors > 0 ? "error" : ""}">
+            <span class="stat-label">Compression Errors:</span>
+            <span class="stat-value">${metrics.stats.compressionErrors}</span>
+          </div>
+          <div class="stat-item ${metrics.stats.encryptionErrors > 0 ? "error" : ""}">
+            <span class="stat-label">Encryption Errors:</span>
+            <span class="stat-value">${metrics.stats.encryptionErrors}</span>
+          </div>
+          <div class="stat-item ${metrics.stats.subscriptionErrors > 0 ? "error" : ""}">
+            <span class="stat-label">Subscription Errors:</span>
+            <span class="stat-value">${metrics.stats.subscriptionErrors}</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (metrics.lastError) {
+      const timeAgo = metrics.lastError.timeAgo;
+      const timeAgoStr = timeAgo < 60000
+        ? `${Math.floor(timeAgo / 1000)}s ago`
+        : `${Math.floor(timeAgo / 60000)}m ago`;
+
+      metricsHtml += `
+        <div class="metrics-error">
+          <h5>⚠️ Last Error</h5>
+          <div class="error-message">${this.escapeHtml(metrics.lastError.message)}</div>
+          <div class="error-time">Occurred ${timeAgoStr}</div>
+        </div>
+      `;
+    } else if (!hasErrors) {
+      metricsHtml += `
+        <div class="metrics-success">
+          <div class="success-message">✓ No errors detected</div>
+        </div>
+      `;
+    }
+
+    metricsDiv.innerHTML = metricsHtml;
+  }
+
+  escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
   updateStatus() {
     const statusDiv = document.getElementById("status");
     let statusHtml = "<h4>Configuration Status</h4>";
@@ -336,6 +463,8 @@ class DataConnectorConfig {
                                 <h4>Current Status</h4>
                                 <div class="status-indicator success">✓ Server is active and listening for client connections</div>
                             </div>
+
+                            <div id="metrics" class="metrics-section"></div>
 
                             <div class="configuration-note">
                                 <h4>💡 Need to Configure?</h4>
