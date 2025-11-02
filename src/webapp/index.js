@@ -306,23 +306,30 @@ class DataConnectorConfig {
           <div class="metric-label">Status</div>
           <div class="metric-value">${metrics.status.readyToSend ? "✓ Ready" : "✗ Not Ready"}</div>
         </div>
+        ${metrics.mode === "client" ? `
         <div class="metric-item">
           <div class="metric-label">Buffered Deltas</div>
           <div class="metric-value">${metrics.status.deltasBuffered}</div>
         </div>
+        ` : ""}
       </div>
 
       <div class="metrics-stats">
         <h5>Transmission Statistics</h5>
         <div class="stats-grid">
+          ${metrics.mode === "client" ? `
           <div class="stat-item">
             <span class="stat-label">Deltas Sent:</span>
             <span class="stat-value">${metrics.stats.deltasSent.toLocaleString()}</span>
           </div>
+          ` : ""}
+          ${metrics.mode === "server" ? `
           <div class="stat-item">
             <span class="stat-label">Deltas Received:</span>
             <span class="stat-value">${metrics.stats.deltasReceived.toLocaleString()}</span>
           </div>
+          ` : ""}
+          ${metrics.mode === "client" ? `
           <div class="stat-item ${metrics.stats.udpSendErrors > 0 ? "error" : ""}">
             <span class="stat-label">UDP Send Errors:</span>
             <span class="stat-value">${metrics.stats.udpSendErrors}</span>
@@ -331,6 +338,7 @@ class DataConnectorConfig {
             <span class="stat-label">UDP Retries:</span>
             <span class="stat-value">${metrics.stats.udpRetries}</span>
           </div>
+          ` : ""}
           <div class="stat-item ${metrics.stats.compressionErrors > 0 ? "error" : ""}">
             <span class="stat-label">Compression Errors:</span>
             <span class="stat-value">${metrics.stats.compressionErrors}</span>
@@ -339,10 +347,12 @@ class DataConnectorConfig {
             <span class="stat-label">Encryption Errors:</span>
             <span class="stat-value">${metrics.stats.encryptionErrors}</span>
           </div>
+          ${metrics.mode === "client" ? `
           <div class="stat-item ${metrics.stats.subscriptionErrors > 0 ? "error" : ""}">
             <span class="stat-label">Subscription Errors:</span>
             <span class="stat-value">${metrics.stats.subscriptionErrors}</span>
           </div>
+          ` : ""}
         </div>
       </div>
     `;
