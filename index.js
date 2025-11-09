@@ -57,6 +57,7 @@ module.exports = function createPlugin(app) {
   const rateLimitMap = new Map(); // key: IP address, value: { count, resetTime }
   const RATE_LIMIT_WINDOW = 60000; // 1 minute
   const RATE_LIMIT_MAX_REQUESTS = 20; // 20 requests per minute per IP
+  let rateLimitCleanupInterval; // Interval for cleaning up old rate limit entries
 
   // Metrics tracking
   const metrics = {
@@ -106,7 +107,8 @@ module.exports = function createPlugin(app) {
   /**
    * Cleanup old rate limit entries periodically
    */
-  setInterval(() => {
+  // eslint-disable-next-line prefer-const
+  rateLimitCleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [ip, data] of rateLimitMap.entries()) {
       if (now > data.resetTime) {
@@ -332,6 +334,29 @@ module.exports = function createPlugin(app) {
 
       deltaTimerWatcher.on("error", (error) => {
         app.error(`Delta timer watcher error: ${error.message}`);
+        // Close the failed watcher
+        if (deltaTimerWatcher) {
+          deltaTimerWatcher.close();
+          deltaTimerWatcher = null;
+        }
+        // Attempt to recreate watcher after delay
+        setTimeout(() => {
+          app.debug("Attempting to recreate delta timer watcher...");
+          try {
+            deltaTimerWatcher = watch(deltaTimerFile, (eventType) => {
+              if (eventType === "change") {
+                app.debug("Delta timer configuration file changed");
+                handleDeltaTimerChange();
+              }
+            });
+            deltaTimerWatcher.on("error", (err) => {
+              app.error(`Delta timer watcher error after recovery: ${err.message}`);
+            });
+            app.debug("Delta timer watcher recreated successfully");
+          } catch (err) {
+            app.error(`Failed to recreate delta timer watcher: ${err.message}`);
+          }
+        }, 5000);
       });
 
       // Watch subscription.json for changes
@@ -344,6 +369,29 @@ module.exports = function createPlugin(app) {
 
       subscriptionWatcher.on("error", (error) => {
         app.error(`Subscription watcher error: ${error.message}`);
+        // Close the failed watcher
+        if (subscriptionWatcher) {
+          subscriptionWatcher.close();
+          subscriptionWatcher = null;
+        }
+        // Attempt to recreate watcher after delay
+        setTimeout(() => {
+          app.debug("Attempting to recreate subscription watcher...");
+          try {
+            subscriptionWatcher = watch(subscriptionFile, (eventType) => {
+              if (eventType === "change") {
+                app.debug("Subscription configuration file changed");
+                handleSubscriptionChange();
+              }
+            });
+            subscriptionWatcher.on("error", (err) => {
+              app.error(`Subscription watcher error after recovery: ${err.message}`);
+            });
+            app.debug("Subscription watcher recreated successfully");
+          } catch (err) {
+            app.error(`Failed to recreate subscription watcher: ${err.message}`);
+          }
+        }, 5000);
       });
 
       // Load initial subscription configuration
@@ -429,6 +477,12 @@ module.exports = function createPlugin(app) {
       const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
       if (!checkRateLimit(clientIp)) {
         return res.status(429).json({ error: "Too many requests, please try again later" });
+      }
+
+      // Validate Content-Type
+      const contentType = req.headers["content-type"];
+      if (!contentType || !contentType.includes("application/json")) {
+        return res.status(415).json({ error: "Content-Type must be application/json" });
       }
 
       // Check if running in server mode
@@ -756,6 +810,7 @@ module.exports = function createPlugin(app) {
 
     if (!socketUdp) {
       app.error("UDP socket not initialized, cannot send message");
+      setStatus("UDP socket not initialized - cannot send data");
       return;
     }
 
@@ -791,6 +846,7 @@ module.exports = function createPlugin(app) {
 
     // Clear intervals and timeouts
     clearInterval(helloMessageSender);
+    clearInterval(rateLimitCleanupInterval);
     clearTimeout(pingTimeout);
     clearTimeout(deltaTimer);
     clearTimeout(deltaTimerDebounceTimer);
@@ -858,16 +914,6 @@ module.exports = function createPlugin(app) {
         pattern: "^[A-Za-z0-9!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>\\/?]{32}$",
         examples: ["MySecretKey123456789012345678901", "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"]
       },
-      subscribeReadIntervalTime: {
-        type: "integer",
-        default: 1000,
-        title: "Configuration Refresh Rate",
-        description:
-          "How often to check for changes in subscription configuration files (milliseconds). Lower values provide faster config updates but use more resources.",
-        minimum: 100,
-        maximum: 60000,
-        examples: [500, 1000, 2000, 5000]
-      },
       helloMessageSender: {
         type: "integer",
         default: 60,
@@ -928,10 +974,6 @@ module.exports = function createPlugin(app) {
     then: {
       required: ["udpPort", "secretKey", "udpAddress", "testAddress", "testPort"],
       properties: {
-        subscribeReadIntervalTime: {
-          description:
-            "CLIENT ONLY: How often to check for changes in subscription configuration files (milliseconds). Lower values provide faster config updates but use more resources."
-        },
         helloMessageSender: {
           description:
             "CLIENT ONLY: How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds."
@@ -957,7 +999,6 @@ module.exports = function createPlugin(app) {
     else: {
       required: ["udpPort", "secretKey"],
       properties: {
-        subscribeReadIntervalTime: false,
         helloMessageSender: false,
         udpAddress: false,
         testAddress: false,

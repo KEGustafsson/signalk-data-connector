@@ -509,5 +509,23 @@ document.addEventListener("DOMContentLoaded", () => {
   window.dataConnectorConfig = new DataConnectorConfig();
 });
 
+// Clean up metrics refresh interval when page is hidden or unloaded
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && window.dataConnectorConfig && window.dataConnectorConfig.metricsInterval) {
+    clearInterval(window.dataConnectorConfig.metricsInterval);
+    window.dataConnectorConfig.metricsInterval = null;
+  } else if (!document.hidden && window.dataConnectorConfig && !window.dataConnectorConfig.metricsInterval) {
+    // Restart metrics refresh when page becomes visible again
+    window.dataConnectorConfig.startMetricsRefresh();
+  }
+});
+
+window.addEventListener("beforeunload", () => {
+  if (window.dataConnectorConfig && window.dataConnectorConfig.metricsInterval) {
+    clearInterval(window.dataConnectorConfig.metricsInterval);
+    window.dataConnectorConfig.metricsInterval = null;
+  }
+});
+
 // Export for global access
 export default DataConnectorConfig;

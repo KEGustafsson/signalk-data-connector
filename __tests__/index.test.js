@@ -28,10 +28,12 @@ describe("SignalK Data Connector Plugin", () => {
     plugin = createPlugin(mockApp);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (plugin && plugin.stop) {
       plugin.stop();
     }
+    // Wait for async cleanup to complete (timers, monitors, etc.)
+    await new Promise(resolve => setTimeout(resolve, 100));
   });
 
   describe("Plugin Metadata", () => {
@@ -204,8 +206,7 @@ describe("SignalK Data Connector Plugin", () => {
         testAddress: "127.0.0.1",
         testPort: 80,
         pingIntervalTime: 1,
-        helloMessageSender: 60,
-        subscribeReadIntervalTime: 1000
+        helloMessageSender: 60
       };
 
       await plugin.start(options);
@@ -279,7 +280,8 @@ describe("SignalK Data Connector Plugin", () => {
     test("should check initialization before validating filename on POST", async () => {
       const mockReq = {
         params: { filename: "invalid.json" },
-        body: {}
+        body: {},
+        headers: { "content-type": "application/json" }
       };
       const mockRes = {
         status: jest.fn().mockReturnThis(),

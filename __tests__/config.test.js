@@ -38,6 +38,8 @@ describe("Configuration File Operations", () => {
     if (plugin && plugin.stop) {
       plugin.stop();
     }
+    // Wait for async cleanup to complete (timers, monitors, etc.)
+    await new Promise(resolve => setTimeout(resolve, 100));
     // Clean up temporary directory
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -56,8 +58,7 @@ describe("Configuration File Operations", () => {
         testAddress: "127.0.0.1",
         testPort: 80,
         pingIntervalTime: 1,
-        helloMessageSender: 60,
-        subscribeReadIntervalTime: 1000
+        helloMessageSender: 60
       };
 
       await plugin.start(options);
@@ -83,8 +84,7 @@ describe("Configuration File Operations", () => {
         testAddress: "127.0.0.1",
         testPort: 80,
         pingIntervalTime: 1,
-        helloMessageSender: 60,
-        subscribeReadIntervalTime: 1000
+        helloMessageSender: 60
       };
 
       await plugin.start(options);
@@ -117,8 +117,7 @@ describe("Configuration File Operations", () => {
         testAddress: "127.0.0.1",
         testPort: 80,
         pingIntervalTime: 1,
-        helloMessageSender: 60,
-        subscribeReadIntervalTime: 1000
+        helloMessageSender: 60
       };
 
       await plugin.start(options);
@@ -145,8 +144,7 @@ describe("Configuration File Operations", () => {
         testAddress: "127.0.0.1",
         testPort: 80,
         pingIntervalTime: 1,
-        helloMessageSender: 60,
-        subscribeReadIntervalTime: 1000
+        helloMessageSender: 60
       };
 
       await plugin.start(options);
@@ -168,8 +166,7 @@ describe("Configuration File Operations", () => {
         testAddress: "127.0.0.1",
         testPort: 80,
         pingIntervalTime: 1,
-        helloMessageSender: 60,
-        subscribeReadIntervalTime: 1000
+        helloMessageSender: 60
       };
 
       // Should not throw, should use defaults
@@ -217,8 +214,7 @@ describe("Configuration File Operations", () => {
         testAddress: "127.0.0.1",
         testPort: 80,
         pingIntervalTime: 1,
-        helloMessageSender: 60,
-        subscribeReadIntervalTime: 1000
+        helloMessageSender: 60
       };
 
       // Should handle missing context gracefully
@@ -242,8 +238,7 @@ describe("Configuration File Operations", () => {
         testAddress: "127.0.0.1",
         testPort: 80,
         pingIntervalTime: 1,
-        helloMessageSender: 60,
-        subscribeReadIntervalTime: 1000
+        helloMessageSender: 60
       };
 
       // Should handle missing subscribe gracefully
