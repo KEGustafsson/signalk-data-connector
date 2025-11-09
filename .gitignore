@@ -3,7 +3,6 @@ node_modules/
 npm-debug.log*
 
 # Build output
-# Note: public/ must be committed for npm package distribution (contains built webapp)
 # public/
 # dist/
 
