@@ -39,7 +39,7 @@ describe("Configuration File Operations", () => {
       plugin.stop();
     }
     // Wait for async cleanup to complete (timers, monitors, etc.)
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     // Clean up temporary directory
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -64,7 +64,10 @@ describe("Configuration File Operations", () => {
       await plugin.start(options);
 
       const deltaTimerPath = path.join(tempDir, "delta_timer.json");
-      const exists = await fs.access(deltaTimerPath).then(() => true).catch(() => false);
+      const exists = await fs
+        .access(deltaTimerPath)
+        .then(() => true)
+        .catch(() => false);
 
       expect(exists).toBe(true);
 
@@ -90,7 +93,10 @@ describe("Configuration File Operations", () => {
       await plugin.start(options);
 
       const subscriptionPath = path.join(tempDir, "subscription.json");
-      const exists = await fs.access(subscriptionPath).then(() => true).catch(() => false);
+      const exists = await fs
+        .access(subscriptionPath)
+        .then(() => true)
+        .catch(() => false);
 
       expect(exists).toBe(true);
 
@@ -187,8 +193,14 @@ describe("Configuration File Operations", () => {
       const deltaTimerPath = path.join(tempDir, "delta_timer.json");
       const subscriptionPath = path.join(tempDir, "subscription.json");
 
-      const deltaExists = await fs.access(deltaTimerPath).then(() => true).catch(() => false);
-      const subExists = await fs.access(subscriptionPath).then(() => true).catch(() => false);
+      const deltaExists = await fs
+        .access(deltaTimerPath)
+        .then(() => true)
+        .catch(() => false);
+      const subExists = await fs
+        .access(subscriptionPath)
+        .then(() => true)
+        .catch(() => false);
 
       // Server mode should not create these files
       expect(deltaExists).toBe(false);

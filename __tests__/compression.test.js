@@ -33,17 +33,22 @@ describe("Compression and Encryption Pipeline", () => {
     });
 
     test("should compress large data efficiently", (done) => {
-      const largeData = Buffer.from(JSON.stringify({
-        deltas: Array(100).fill({
-          context: "vessels.urn:mrn:imo:mmsi:123456789",
-          updates: [{
-            timestamp: "2024-01-01T00:00:00Z",
-            values: [
-              { path: "navigation.position", value: { latitude: 60.1, longitude: 24.9 } }
+      const largeData = Buffer.from(
+        JSON.stringify({
+          deltas: Array(100).fill({
+            context: "vessels.urn:mrn:imo:mmsi:123456789",
+            updates: [
+              {
+                timestamp: "2024-01-01T00:00:00Z",
+                values: [
+                  { path: "navigation.position", value: { latitude: 60.1, longitude: 24.9 } }
+                ]
+              }
             ]
-          }]
-        })
-      }), "utf8");
+          })
+        }),
+        "utf8"
+      );
 
       zlib.brotliCompress(largeData, (err, compressed) => {
         expect(err).toBeNull();
@@ -99,14 +104,16 @@ describe("Compression and Encryption Pipeline", () => {
     test("should reduce size significantly with compression + encryption", (done) => {
       const largeData = Array(50).fill({
         context: "vessels.urn:mrn:imo:mmsi:123456789",
-        updates: [{
-          timestamp: "2024-01-01T00:00:00Z",
-          values: [
-            { path: "navigation.position", value: { latitude: 60.1, longitude: 24.9 } },
-            { path: "navigation.speedOverGround", value: 5.2 },
-            { path: "navigation.courseOverGroundTrue", value: 1.57 }
-          ]
-        }]
+        updates: [
+          {
+            timestamp: "2024-01-01T00:00:00Z",
+            values: [
+              { path: "navigation.position", value: { latitude: 60.1, longitude: 24.9 } },
+              { path: "navigation.speedOverGround", value: 5.2 },
+              { path: "navigation.courseOverGroundTrue", value: 1.57 }
+            ]
+          }
+        ]
       });
 
       const originalBuffer = Buffer.from(JSON.stringify(largeData), "utf8");
@@ -160,10 +167,12 @@ describe("Compression and Encryption Pipeline", () => {
       const repeatedData = {
         deltas: Array(100).fill({
           context: "vessels.self",
-          updates: [{
-            timestamp: "2024-01-01T00:00:00Z",
-            values: [{ path: "test", value: 42 }]
-          }]
+          updates: [
+            {
+              timestamp: "2024-01-01T00:00:00Z",
+              values: [{ path: "test", value: 42 }]
+            }
+          ]
         })
       };
 
@@ -180,7 +189,10 @@ describe("Compression and Encryption Pipeline", () => {
 
     test("should handle already compressed data", (done) => {
       const randomData = Buffer.from(
-        Array(1000).fill(0).map(() => Math.random().toString(36)).join("")
+        Array(1000)
+          .fill(0)
+          .map(() => Math.random().toString(36))
+          .join("")
       );
 
       zlib.brotliCompress(randomData, (err, compressed) => {

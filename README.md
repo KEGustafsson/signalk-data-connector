@@ -20,11 +20,13 @@ A SignalK plugin for secure, encrypted UDP data transmission with dual-layer Bro
 ## Architecture
 
 ### Client (Sender)
+
 ```
 Collect → Compress (Brotli) → Encrypt (AES-256) → Compress (Brotli) → UDP Send
 ```
 
 ### Server (Receiver)
+
 ```
 UDP Receive → Decompress → Decrypt → Decompress → Forward to SignalK
 ```
@@ -68,15 +70,18 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
 Access via: `http://[signalk-server]:3000/plugins/signalk-data-connector`
 
 **Delta Timer** (`delta_timer.json`):
+
 ```json
 {
   "deltaTimer": 1000
 }
 ```
+
 - Lower values: More frequent updates, higher bandwidth
 - Higher values: Better compression, lower bandwidth
 
 **Subscribe data:**
+
 ```json
 {
   "context": "*",
@@ -100,6 +105,7 @@ The following chart demonstrates the significant bandwidth savings achieved by t
 ![Data Rate Comparison](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/datarate.jpg)
 
 **Key Performance Benefits:**
+
 - **1000ms Collection Time**: ~44.1 kb/s (optimal compression)
 - **100ms Collection Time**: ~107.7 kb/s (faster updates)
 - **WebSocket Realtime**: ~149.5 kb/s (highest bandwidth usage)
@@ -121,6 +127,7 @@ The encrypted & compressed UDP approach provides **70% bandwidth reduction** com
 - Must match on both client and server
 
 **Generate secure key:**
+
 ```bash
 openssl rand -base64 32 | cut -c1-32
 ```
@@ -136,16 +143,19 @@ openssl rand -base64 32 | cut -c1-32
 ## Troubleshooting
 
 ### Plugin Not Loading
+
 - Verify `npm install` completed successfully
 - Check SignalK server logs for errors
 - Ensure plugin directory is correct
 
 ### Web UI Not Accessible
+
 - Run `npm run build` to generate UI files
 - Check `public/` directory exists with files
 - Verify SignalK is serving plugin static files
 
 ### No Data Transmission
+
 - Confirm matching encryption keys on client and server
 - Check UDP port configuration
 - Verify firewall allows UDP traffic on configured port
@@ -153,6 +163,7 @@ openssl rand -base64 32 | cut -c1-32
 - Enable debug logging to see detailed operations
 
 ### Poor Performance
+
 - Increase delta timer for better compression
 - Verify sufficient data is being collected
 - Check network latency and packet loss
@@ -160,6 +171,7 @@ openssl rand -base64 32 | cut -c1-32
 ### Debug Logging
 
 Enable in SignalK plugin settings to see:
+
 - Connection monitor status
 - Configuration file changes
 - Delta transmission statistics
@@ -206,6 +218,7 @@ signalk-data-connector/
 7. Submit pull request
 
 **Requirements:**
+
 - All tests must pass
 - No ESLint errors
 - Code formatted with Prettier

@@ -220,7 +220,9 @@ module.exports = function createPlugin(app) {
               app.debug(`Delta timer updated to ${deltaTimerTime}ms`);
             }
           } else {
-            app.error(`Invalid delta timer value: ${newTimerValue}. Must be between 100 and 10000ms`);
+            app.error(
+              `Invalid delta timer value: ${newTimerValue}. Must be between 100 and 10000ms`
+            );
           }
         }
       } catch (err) {
@@ -241,10 +243,12 @@ module.exports = function createPlugin(app) {
         const content = await readFile(subscriptionFile, "utf-8").catch(() => null);
 
         // If file doesn't exist, use defaults
-        const localSubscriptionNew = content ? JSON.parse(content) : {
-          context: "*",
-          subscribe: [{ path: "*" }]
-        };
+        const localSubscriptionNew = content
+          ? JSON.parse(content)
+          : {
+              context: "*",
+              subscribe: [{ path: "*" }]
+            };
 
         // Use content hashing instead of JSON.stringify comparison
         const configString = JSON.stringify(localSubscriptionNew);
@@ -295,7 +299,12 @@ module.exports = function createPlugin(app) {
                 deltas.push(delta);
                 setImmediate(() => app.reportOutputMessages());
                 if (timer) {
-                  packCrypt(deltas, pluginOptions.secretKey, pluginOptions.udpAddress, pluginOptions.udpPort);
+                  packCrypt(
+                    deltas,
+                    pluginOptions.secretKey,
+                    pluginOptions.udpAddress,
+                    pluginOptions.udpPort
+                  );
                   app.debug(JSON.stringify(deltas, null, 2));
                   deltas = [];
                   timer = false;
@@ -433,11 +442,13 @@ module.exports = function createPlugin(app) {
           readyToSend: readyToSend,
           deltasBuffered: deltas.length
         },
-        lastError: metrics.lastError ? {
-          message: metrics.lastError,
-          timestamp: metrics.lastErrorTime,
-          timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
-        } : null
+        lastError: metrics.lastError
+          ? {
+              message: metrics.lastError,
+              timestamp: metrics.lastErrorTime,
+              timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
+            }
+          : null
       };
 
       res.json(metricsData);
@@ -821,9 +832,12 @@ module.exports = function createPlugin(app) {
         if (retryCount < MAX_RETRIES && (error.code === "EAGAIN" || error.code === "ENOBUFS")) {
           app.debug(`UDP send error (${error.code}), retry ${retryCount + 1}/${MAX_RETRIES}`);
           metrics.udpRetries++;
-          setTimeout(() => {
-            udpSend(message, host, port, retryCount + 1);
-          }, RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+          setTimeout(
+            () => {
+              udpSend(message, host, port, retryCount + 1);
+            },
+            RETRY_DELAY * (retryCount + 1)
+          ); // Exponential backoff
         } else {
           // Log error and give up
           app.error(`UDP send error to ${host}:${port} - ${error.message} (code: ${error.code})`);

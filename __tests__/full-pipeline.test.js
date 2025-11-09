@@ -149,21 +149,26 @@ describe("Full Encryption/Decryption Pipeline", () => {
     });
 
     test("should handle large delta batches (realistic scenario)", (done) => {
-      const largeDeltaBatch = Array(50).fill(null).map((_, i) => ({
-        context: "vessels.urn:mrn:imo:mmsi:123456789",
-        updates: [
-          {
-            timestamp: new Date(Date.now() + i * 1000).toISOString(),
-            values: [
-              { path: "navigation.position", value: { latitude: 60.1 + i * 0.001, longitude: 24.9 + i * 0.001 } },
-              { path: "navigation.speedOverGround", value: 5.2 + i * 0.1 },
-              { path: "navigation.courseOverGroundTrue", value: 1.57 + i * 0.01 },
-              { path: "environment.wind.speedApparent", value: 10.5 + i * 0.2 },
-              { path: "environment.wind.angleApparent", value: 0.785 + i * 0.01 }
-            ]
-          }
-        ]
-      }));
+      const largeDeltaBatch = Array(50)
+        .fill(null)
+        .map((_, i) => ({
+          context: "vessels.urn:mrn:imo:mmsi:123456789",
+          updates: [
+            {
+              timestamp: new Date(Date.now() + i * 1000).toISOString(),
+              values: [
+                {
+                  path: "navigation.position",
+                  value: { latitude: 60.1 + i * 0.001, longitude: 24.9 + i * 0.001 }
+                },
+                { path: "navigation.speedOverGround", value: 5.2 + i * 0.1 },
+                { path: "navigation.courseOverGroundTrue", value: 1.57 + i * 0.01 },
+                { path: "environment.wind.speedApparent", value: 10.5 + i * 0.2 },
+                { path: "environment.wind.angleApparent", value: 0.785 + i * 0.01 }
+              ]
+            }
+          ]
+        }));
 
       const originalSize = Buffer.from(JSON.stringify(largeDeltaBatch), "utf8").length;
 
@@ -192,7 +197,10 @@ describe("Full Encryption/Decryption Pipeline", () => {
             timestamp: "2024-01-01T00:00:00Z",
             values: [
               { path: "navigation.destination.name", value: "Café Ñoño 世界 🌍" },
-              { path: "navigation.notes", value: "Test with special chars: !@#$%^&*()_+-=[]{}|;':\"\\,.<>?/~`" }
+              {
+                path: "navigation.notes",
+                value: "Test with special chars: !@#$%^&*()_+-=[]{}|;':\"\\,.<>?/~`"
+              }
             ]
           }
         ]
@@ -303,18 +311,20 @@ describe("Full Encryption/Decryption Pipeline", () => {
 
   describe("Performance and Size Tests", () => {
     test("should demonstrate compression effectiveness", (done) => {
-      const realisticDelta = Array(82).fill(null).map((_, i) => ({
-        context: "vessels.urn:mrn:imo:mmsi:123456789",
-        updates: [
-          {
-            timestamp: new Date(Date.now() + i * 100).toISOString(),
-            values: [
-              { path: "navigation.position.latitude", value: 60.123456 + i * 0.0001 },
-              { path: "navigation.position.longitude", value: 24.987654 + i * 0.0001 }
-            ]
-          }
-        ]
-      }));
+      const realisticDelta = Array(82)
+        .fill(null)
+        .map((_, i) => ({
+          context: "vessels.urn:mrn:imo:mmsi:123456789",
+          updates: [
+            {
+              timestamp: new Date(Date.now() + i * 100).toISOString(),
+              values: [
+                { path: "navigation.position.latitude", value: 60.123456 + i * 0.0001 },
+                { path: "navigation.position.longitude", value: 24.987654 + i * 0.0001 }
+              ]
+            }
+          ]
+        }));
 
       const originalBuffer = Buffer.from(JSON.stringify(realisticDelta), "utf8");
 
@@ -322,7 +332,9 @@ describe("Full Encryption/Decryption Pipeline", () => {
         expect(err).toBeNull();
 
         const compressionRatio = ((1 - encrypted.length / originalBuffer.length) * 100).toFixed(2);
-        console.log(`Original: ${originalBuffer.length} bytes, Encrypted+Compressed: ${encrypted.length} bytes, Reduction: ${compressionRatio}%`);
+        console.log(
+          `Original: ${originalBuffer.length} bytes, Encrypted+Compressed: ${encrypted.length} bytes, Reduction: ${compressionRatio}%`
+        );
 
         unpackDecrypt(encrypted, validSecretKey, (err, decrypted) => {
           expect(err).toBeNull();

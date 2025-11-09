@@ -33,7 +33,7 @@ describe("SignalK Data Connector Plugin", () => {
       plugin.stop();
     }
     // Wait for async cleanup to complete (timers, monitors, etc.)
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   });
 
   describe("Plugin Metadata", () => {
@@ -144,9 +144,7 @@ describe("SignalK Data Connector Plugin", () => {
       await plugin.start(options);
 
       expect(() => plugin.stop()).not.toThrow();
-      expect(mockApp.debug).toHaveBeenCalledWith(
-        expect.stringContaining("stopped")
-      );
+      expect(mockApp.debug).toHaveBeenCalledWith(expect.stringContaining("stopped"));
     });
 
     test("should be safe to call stop multiple times", async () => {
@@ -176,9 +174,7 @@ describe("SignalK Data Connector Plugin", () => {
 
       await plugin.start(options);
 
-      expect(mockApp.debug).toHaveBeenCalledWith(
-        expect.stringContaining("server started")
-      );
+      expect(mockApp.debug).toHaveBeenCalledWith(expect.stringContaining("server started"));
     });
 
     test("should accept boolean true for server mode", async () => {
@@ -190,9 +186,7 @@ describe("SignalK Data Connector Plugin", () => {
 
       await plugin.start(options);
 
-      expect(mockApp.debug).toHaveBeenCalledWith(
-        expect.stringContaining("server started")
-      );
+      expect(mockApp.debug).toHaveBeenCalledWith(expect.stringContaining("server started"));
     });
   });
 
@@ -212,9 +206,7 @@ describe("SignalK Data Connector Plugin", () => {
       await plugin.start(options);
 
       // Should not have server-specific debug messages
-      expect(mockApp.debug).not.toHaveBeenCalledWith(
-        expect.stringContaining("server started")
-      );
+      expect(mockApp.debug).not.toHaveBeenCalledWith(expect.stringContaining("server started"));
     });
   });
 
