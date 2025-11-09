@@ -246,9 +246,9 @@ module.exports = function createPlugin(app) {
         const localSubscriptionNew = content
           ? JSON.parse(content)
           : {
-              context: "*",
-              subscribe: [{ path: "*" }]
-            };
+            context: "*",
+            subscribe: [{ path: "*" }]
+          };
 
         // Use content hashing instead of JSON.stringify comparison
         const configString = JSON.stringify(localSubscriptionNew);
@@ -444,10 +444,10 @@ module.exports = function createPlugin(app) {
         },
         lastError: metrics.lastError
           ? {
-              message: metrics.lastError,
-              timestamp: metrics.lastErrorTime,
-              timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
-            }
+            message: metrics.lastError,
+            timestamp: metrics.lastErrorTime,
+            timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
+          }
           : null
       };
 
