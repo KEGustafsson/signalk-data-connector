@@ -692,6 +692,131 @@ module.exports = function createPlugin(app) {
   };
 
   /**
+   * Preprocesses delta data by shortening keys for better compression
+   * @param {Object|Array} delta - Delta data to preprocess
+   * @returns {Object|Array} Preprocessed delta with shortened keys
+   */
+  function preprocessDelta(delta) {
+    if (Array.isArray(delta)) {
+      return delta.map(d => {
+        const processed = { ...d };
+
+        // Shorten context (vessels.urn:mrn:imo:mmsi:XXXXX -> c: XXXXX)
+        if (processed.context && processed.context.includes("vessels.urn:mrn:imo:mmsi:")) {
+          const mmsi = processed.context.split(":").pop();
+          processed.c = mmsi;
+          delete processed.context;
+        }
+
+        // Shorten updates structure
+        if (processed.updates && Array.isArray(processed.updates)) {
+          processed.u = processed.updates.map(update => {
+            const u = {};
+            if (update.timestamp) u.t = update.timestamp;
+            if (update.values) {
+              u.v = update.values.map(val => ({
+                p: val.path
+                  .replace("navigation.", "n.")
+                  .replace("environment.", "e.")
+                  .replace("electrical.", "l.")
+                  .replace("performance.", "f.")
+                  .replace("propulsion.", "r.")
+                  .replace("networking.", "w."),
+                v: val.value
+              }));
+            }
+            return u;
+          });
+          delete processed.updates;
+        }
+
+        return processed;
+      });
+    }
+    return delta;
+  }
+
+  /**
+   * Restores preprocessed delta data to original format
+   * Maintains proper key order for data integrity verification
+   * @param {Object|Array} processed - Preprocessed delta data
+   * @returns {Object|Array} Restored delta with full keys
+   */
+  function restoreDelta(processed) {
+    if (Array.isArray(processed)) {
+      return processed.map(d => {
+        // Create new object with keys in correct order (context first, then updates)
+        const original = {};
+
+        // Restore context first
+        if (d.c) {
+          original.context = `vessels.urn:mrn:imo:mmsi:${d.c}`;
+        }
+
+        // Restore updates structure second
+        if (d.u) {
+          original.updates = d.u.map(u => {
+            const update = {};
+            // Restore timestamp first
+            if (u.t) update.timestamp = u.t;
+            // Restore values second
+            if (u.v) {
+              update.values = u.v.map(val => ({
+                path: val.p
+                  .replace("n.", "navigation.")
+                  .replace("e.", "environment.")
+                  .replace("l.", "electrical.")
+                  .replace("f.", "performance.")
+                  .replace("r.", "propulsion.")
+                  .replace("w.", "networking."),
+                value: val.v
+              }));
+            }
+            return update;
+          });
+        }
+
+        return original;
+      });
+    }
+    return processed;
+  }
+
+  /**
+   * Determines optimal compression quality based on batch size
+   * @param {number} dataSize - Size of data to compress in bytes
+   * @returns {Object} Compression settings with quality levels
+   */
+  function getAdaptiveCompressionSettings(dataSize) {
+    // Thresholds based on testing
+    const SMALL_BATCH = 5000;   // < 5KB
+    const MEDIUM_BATCH = 20000; // < 20KB
+
+    if (dataSize < SMALL_BATCH) {
+      // Small batches: Prioritize speed
+      return {
+        stage1Quality: 9,
+        stage2Quality: 8,
+        description: "fast (small batch)"
+      };
+    } else if (dataSize < MEDIUM_BATCH) {
+      // Medium batches: Balanced
+      return {
+        stage1Quality: 10,
+        stage2Quality: 9,
+        description: "balanced (medium batch)"
+      };
+    } else {
+      // Large batches: Prioritize compression
+      return {
+        stage1Quality: 11,
+        stage2Quality: 9,
+        description: "maximum (large batch)"
+      };
+    }
+  }
+
+  /**
    * Converts delta object to UTF-8 buffer
    * @param {Object|Array} delta - Delta object or array to convert
    * @returns {Buffer} UTF-8 encoded buffer
@@ -702,6 +827,7 @@ module.exports = function createPlugin(app) {
 
   /**
    * Compresses, encrypts, and sends delta data via UDP
+   * Uses adaptive compression and key shortening for optimal performance
    * Based on testing, Compression -> Encryption -> Compression was the most efficient way to reduce size
    * @param {Object|Array} delta - Delta data to send
    * @param {string} secretKey - 32-character encryption key
@@ -711,11 +837,19 @@ module.exports = function createPlugin(app) {
    */
   function packCrypt(delta, secretKey, udpAddress, udpPort) {
     try {
-      const deltaBufferData = deltaBuffer(delta);
+      // Step 1: Preprocess delta to shorten keys
+      const preprocessed = preprocessDelta(delta);
+      const deltaBufferData = deltaBuffer(preprocessed);
+
+      // Step 2: Determine adaptive compression settings based on data size
+      const compressionSettings = getAdaptiveCompressionSettings(deltaBufferData.length);
+      app.debug(`Using ${compressionSettings.description} compression for ${deltaBufferData.length} bytes`);
+
+      // Step 3: First stage compression with adaptive quality
       const brotliOptions = {
         params: {
           [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
-          [zlib.constants.BROTLI_PARAM_QUALITY]: 10,
+          [zlib.constants.BROTLI_PARAM_QUALITY]: compressionSettings.stage1Quality,
           [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBufferData.length
         }
       };
@@ -729,12 +863,15 @@ module.exports = function createPlugin(app) {
           return;
         }
         try {
+          // Step 4: Encrypt the compressed data
           const encryptedDelta = encrypt(compressedDelta, secretKey);
           const encryptedBuffer = Buffer.from(JSON.stringify(encryptedDelta), "utf8");
+
+          // Step 5: Second stage compression with adaptive quality
           const brotliOptions2 = {
             params: {
               [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
-              [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+              [zlib.constants.BROTLI_PARAM_QUALITY]: compressionSettings.stage2Quality,
               [zlib.constants.BROTLI_PARAM_SIZE_HINT]: encryptedBuffer.length
             }
           };
@@ -748,6 +885,8 @@ module.exports = function createPlugin(app) {
               return;
             }
             if (finalDelta) {
+              const compressionRatio = ((1 - finalDelta.length / Buffer.from(JSON.stringify(delta), "utf8").length) * 100).toFixed(1);
+              app.debug(`Compression: ${Buffer.from(JSON.stringify(delta), "utf8").length}B -> ${finalDelta.length}B (${compressionRatio}% reduction)`);
               udpSend(finalDelta, udpAddress, udpPort);
               metrics.deltasSent++;
             }
@@ -766,20 +905,24 @@ module.exports = function createPlugin(app) {
 
   /**
    * Decompresses, decrypts, and processes received UDP data
+   * Restores preprocessed keys to original format
    * @param {Buffer} delta - Encrypted and compressed delta data
    * @param {string} secretKey - 32-character decryption key
    * @returns {void}
    */
   function unpackDecrypt(delta, secretKey) {
+    // Step 1: First stage decompression
     zlib.brotliDecompress(delta, (err, decompressedDelta) => {
       if (err) {
         app.error(`Brotli decompression error (stage 1): ${err.message}`);
         return;
       }
       try {
+        // Step 2: Decrypt the data
         const encryptedData = JSON.parse(decompressedDelta.toString("utf8"));
         const decryptedData = decrypt(encryptedData, secretKey);
 
+        // Step 3: Second stage decompression
         zlib.brotliDecompress(decryptedData, (err, finalDelta) => {
           if (err) {
             app.error(`Brotli decompression error (stage 2): ${err.message}`);
@@ -787,11 +930,15 @@ module.exports = function createPlugin(app) {
           }
           try {
             const jsonContent = JSON.parse(finalDelta.toString());
-            const deltaCount = Object.keys(jsonContent).length;
 
+            // Step 4: Restore the preprocessed delta data
+            const restoredContent = restoreDelta(jsonContent);
+            const deltaCount = Object.keys(restoredContent).length;
+
+            // Step 5: Process each delta message
             for (let i = 0; i < deltaCount; i++) {
-              const jsonKey = Object.keys(jsonContent)[i];
-              const deltaMessage = jsonContent[jsonKey];
+              const jsonKey = Object.keys(restoredContent)[i];
+              const deltaMessage = restoredContent[jsonKey];
               app.handleMessage("", deltaMessage);
               app.debug(JSON.stringify(deltaMessage, null, 2));
               metrics.deltasReceived++;
