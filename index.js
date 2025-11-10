@@ -692,6 +692,57 @@ module.exports = function createPlugin(app) {
   };
 
   /**
+   * Path prefix mapping for SignalK standard and common paths
+   * Ordered by frequency of use for optimal performance
+   */
+  const PATH_PREFIX_MAP = [
+    // Most common SignalK paths (ordered by typical frequency)
+    { from: "navigation.", to: "n." },
+    { from: "environment.", to: "e." },
+    { from: "electrical.", to: "l." },
+    { from: "performance.", to: "f." },
+    { from: "propulsion.", to: "r." },
+    { from: "networking.", to: "w." },
+    // Additional SignalK standard paths
+    { from: "steering.", to: "s." },
+    { from: "communication.", to: "m." },
+    { from: "notifications.", to: "o." },
+    { from: "sensors.", to: "z." },
+    { from: "design.", to: "d." },
+    { from: "tanks.", to: "k." },
+    { from: "resources.", to: "x." },
+    { from: "alarms.", to: "a." }
+  ];
+
+  /**
+   * Shortens a path using the prefix map
+   * @param {string} path - Original path
+   * @returns {string} Shortened path
+   */
+  function shortenPath(path) {
+    for (const mapping of PATH_PREFIX_MAP) {
+      if (path.startsWith(mapping.from)) {
+        return path.replace(mapping.from, mapping.to);
+      }
+    }
+    return path; // Return unchanged if no mapping found
+  }
+
+  /**
+   * Restores a shortened path to its original form
+   * @param {string} path - Shortened path
+   * @returns {string} Original path
+   */
+  function restorePath(path) {
+    for (const mapping of PATH_PREFIX_MAP) {
+      if (path.startsWith(mapping.to)) {
+        return path.replace(mapping.to, mapping.from);
+      }
+    }
+    return path; // Return unchanged if no mapping found
+  }
+
+  /**
    * Preprocesses delta data by shortening keys for better compression
    * @param {Object|Array} delta - Delta data to preprocess
    * @returns {Object|Array} Preprocessed delta with shortened keys
@@ -715,13 +766,7 @@ module.exports = function createPlugin(app) {
             if (update.timestamp) u.t = update.timestamp;
             if (update.values) {
               u.v = update.values.map(val => ({
-                p: val.path
-                  .replace("navigation.", "n.")
-                  .replace("environment.", "e.")
-                  .replace("electrical.", "l.")
-                  .replace("performance.", "f.")
-                  .replace("propulsion.", "r.")
-                  .replace("networking.", "w."),
+                p: shortenPath(val.path),
                 v: val.value
               }));
             }
@@ -762,13 +807,7 @@ module.exports = function createPlugin(app) {
             // Restore values second
             if (u.v) {
               update.values = u.v.map(val => ({
-                path: val.p
-                  .replace("n.", "navigation.")
-                  .replace("e.", "environment.")
-                  .replace("l.", "electrical.")
-                  .replace("f.", "performance.")
-                  .replace("r.", "propulsion.")
-                  .replace("w.", "networking."),
+                path: restorePath(val.p),
                 value: val.v
               }));
             }
