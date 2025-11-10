@@ -714,8 +714,8 @@ module.exports = function createPlugin(app) {
       const deltaBufferData = deltaBuffer(delta);
       const brotliOptions = {
         params: {
-          [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
-          [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+          [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+          [zlib.constants.BROTLI_PARAM_QUALITY]: 10,
           [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBufferData.length
         }
       };
@@ -734,7 +734,7 @@ module.exports = function createPlugin(app) {
           const brotliOptions2 = {
             params: {
               [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
-              [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+              [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
               [zlib.constants.BROTLI_PARAM_SIZE_HINT]: encryptedBuffer.length
             }
           };
