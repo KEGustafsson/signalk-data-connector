@@ -692,26 +692,35 @@ module.exports = function createPlugin(app) {
   };
 
   /**
-   * Path prefix mapping for SignalK standard and common paths
+   * Path prefix mapping for SignalK paths
+   * Based on SignalK Specification v1.7.0 vessel schema
    * Ordered by frequency of use for optimal performance
+   *
+   * @see https://signalk.org/specification/1.7.0/doc/vesselsBranch.html
+   * @see https://github.com/SignalK/specification/blob/master/schemas/vessel.json
    */
   const PATH_PREFIX_MAP = [
-    // Most common SignalK paths (ordered by typical frequency)
-    { from: "navigation.", to: "n." },
-    { from: "environment.", to: "e." },
-    { from: "electrical.", to: "l." },
-    { from: "performance.", to: "f." },
-    { from: "propulsion.", to: "r." },
-    { from: "networking.", to: "w." },
-    // Additional SignalK standard paths
-    { from: "steering.", to: "s." },
-    { from: "communication.", to: "m." },
-    { from: "notifications.", to: "o." },
-    { from: "sensors.", to: "z." },
-    { from: "design.", to: "d." },
-    { from: "tanks.", to: "k." },
-    { from: "resources.", to: "x." },
-    { from: "alarms.", to: "a." }
+    // High-frequency SignalK spec paths (ordered by typical usage)
+    { from: "navigation.", to: "n." },       // Position, course, speed
+    { from: "environment.", to: "e." },      // Wind, depth, temperature
+    { from: "electrical.", to: "l." },       // Batteries, power systems
+    { from: "propulsion.", to: "r." },       // Engine data
+    { from: "steering.", to: "s." },         // Rudder, autopilot
+
+    // Medium-frequency SignalK spec paths
+    { from: "performance.", to: "f." },      // Sailing performance (VMG, polar)
+    { from: "tanks.", to: "k." },            // Fuel, water, waste tanks
+    { from: "communication.", to: "m." },    // Radio, telephone, email
+    { from: "sensors.", to: "z." },          // Sensor states and readings
+    { from: "notifications.", to: "o." },    // Alerts and warnings
+    { from: "sails.", to: "i." },            // Sail data (NEW - per spec)
+    { from: "design.", to: "d." },           // Vessel dimensions
+    { from: "registrations.", to: "g." },    // IMO, national registrations
+
+    // Useful non-spec paths (common in real deployments)
+    { from: "networking.", to: "w." },       // Modem, connectivity data
+    { from: "resources.", to: "x." },        // Charts, notes, regions
+    { from: "alarms.", to: "a." }            // Legacy alarm systems
   ];
 
   /**
