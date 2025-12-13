@@ -1,4 +1,4 @@
-const { encrypt, decrypt } = require("../crypto");
+const { encrypt, decrypt, createHmac, verifyHmac, HMAC_SIZE } = require("../crypto");
 
 describe("Crypto Module", () => {
   const validSecretKey = "12345678901234567890123456789012"; // 32 characters
@@ -165,6 +165,170 @@ describe("Crypto Module", () => {
       const contents = results.map((r) => r.content);
       const uniqueContents = new Set(contents);
       expect(uniqueContents.size).toBe(10);
+    });
+  });
+
+  describe("HMAC", () => {
+    describe("HMAC_SIZE constant", () => {
+      test("should be 32 bytes (SHA-256)", () => {
+        expect(HMAC_SIZE).toBe(32);
+      });
+    });
+
+    describe("createHmac", () => {
+      test("should create 32-byte HMAC for valid data", () => {
+        const data = Buffer.from("test data");
+        const hmac = createHmac(data, validSecretKey);
+
+        expect(Buffer.isBuffer(hmac)).toBe(true);
+        expect(hmac.length).toBe(32);
+      });
+
+      test("should create consistent HMAC for same data and key", () => {
+        const data = Buffer.from("test data");
+        const hmac1 = createHmac(data, validSecretKey);
+        const hmac2 = createHmac(data, validSecretKey);
+
+        expect(hmac1.equals(hmac2)).toBe(true);
+      });
+
+      test("should create different HMAC for different data", () => {
+        const data1 = Buffer.from("test data 1");
+        const data2 = Buffer.from("test data 2");
+        const hmac1 = createHmac(data1, validSecretKey);
+        const hmac2 = createHmac(data2, validSecretKey);
+
+        expect(hmac1.equals(hmac2)).toBe(false);
+      });
+
+      test("should create different HMAC for different keys", () => {
+        const data = Buffer.from("test data");
+        const key2 = "abcdefghijklmnopqrstuvwxyz123456";
+        const hmac1 = createHmac(data, validSecretKey);
+        const hmac2 = createHmac(data, key2);
+
+        expect(hmac1.equals(hmac2)).toBe(false);
+      });
+
+      test("should throw error for invalid secret key", () => {
+        const data = Buffer.from("test data");
+        expect(() => createHmac(data, "short")).toThrow("Secret key must be exactly 32 characters");
+        expect(() => createHmac(data, null)).toThrow("Secret key must be exactly 32 characters");
+        expect(() => createHmac(data, "")).toThrow("Secret key must be exactly 32 characters");
+      });
+
+      test("should throw error for empty data", () => {
+        expect(() => createHmac(Buffer.alloc(0), validSecretKey)).toThrow(
+          "Data to sign cannot be empty"
+        );
+        expect(() => createHmac(null, validSecretKey)).toThrow("Data to sign cannot be empty");
+      });
+    });
+
+    describe("verifyHmac", () => {
+      test("should verify valid HMAC", () => {
+        const data = Buffer.from("test data");
+        const hmac = createHmac(data, validSecretKey);
+
+        expect(verifyHmac(data, hmac, validSecretKey)).toBe(true);
+      });
+
+      test("should reject tampered data", () => {
+        const data = Buffer.from("test data");
+        const hmac = createHmac(data, validSecretKey);
+        const tamperedData = Buffer.from("tampered data");
+
+        expect(verifyHmac(tamperedData, hmac, validSecretKey)).toBe(false);
+      });
+
+      test("should reject tampered HMAC", () => {
+        const data = Buffer.from("test data");
+        const hmac = createHmac(data, validSecretKey);
+        const tamperedHmac = Buffer.from(hmac);
+        tamperedHmac[0] ^= 0xff; // Flip bits in first byte
+
+        expect(verifyHmac(data, tamperedHmac, validSecretKey)).toBe(false);
+      });
+
+      test("should reject wrong key", () => {
+        const data = Buffer.from("test data");
+        const hmac = createHmac(data, validSecretKey);
+        const wrongKey = "wrongkey1234567890123456789012ab"; // 32 chars
+
+        expect(verifyHmac(data, hmac, wrongKey)).toBe(false);
+      });
+
+      test("should reject invalid HMAC size", () => {
+        const data = Buffer.from("test data");
+        const shortHmac = Buffer.alloc(16); // Too short
+        const longHmac = Buffer.alloc(64); // Too long
+
+        expect(verifyHmac(data, shortHmac, validSecretKey)).toBe(false);
+        expect(verifyHmac(data, longHmac, validSecretKey)).toBe(false);
+      });
+
+      test("should reject null/undefined HMAC", () => {
+        const data = Buffer.from("test data");
+
+        expect(verifyHmac(data, null, validSecretKey)).toBe(false);
+        expect(verifyHmac(data, undefined, validSecretKey)).toBe(false);
+      });
+
+      test("should throw error for invalid secret key", () => {
+        const data = Buffer.from("test data");
+        const hmac = Buffer.alloc(32);
+
+        expect(() => verifyHmac(data, hmac, "short")).toThrow(
+          "Secret key must be exactly 32 characters"
+        );
+        expect(() => verifyHmac(data, hmac, null)).toThrow(
+          "Secret key must be exactly 32 characters"
+        );
+      });
+    });
+
+    describe("HMAC round-trip", () => {
+      test("should work with encrypted data", () => {
+        // Simulate the actual use case: HMAC over encrypted data
+        const originalData = Buffer.from(JSON.stringify({ test: "data" }));
+        const encrypted = encrypt(originalData, validSecretKey);
+        const encryptedBuffer = Buffer.from(JSON.stringify(encrypted));
+
+        // Create HMAC over the encrypted data
+        const hmac = createHmac(encryptedBuffer, validSecretKey);
+
+        // Verify HMAC
+        expect(verifyHmac(encryptedBuffer, hmac, validSecretKey)).toBe(true);
+
+        // Simulate network packet: HMAC + encrypted data
+        const packet = Buffer.concat([hmac, encryptedBuffer]);
+        expect(packet.length).toBe(HMAC_SIZE + encryptedBuffer.length);
+
+        // Extract and verify on "receiving" side
+        const receivedHmac = packet.slice(0, HMAC_SIZE);
+        const receivedData = packet.slice(HMAC_SIZE);
+
+        expect(verifyHmac(receivedData, receivedHmac, validSecretKey)).toBe(true);
+
+        // Decrypt the data
+        const decryptedData = decrypt(JSON.parse(receivedData.toString()), validSecretKey);
+        expect(JSON.parse(decryptedData.toString())).toEqual({ test: "data" });
+      });
+
+      test("should detect packet tampering", () => {
+        const originalData = Buffer.from("sensitive data");
+        const hmac = createHmac(originalData, validSecretKey);
+        const packet = Buffer.concat([hmac, originalData]);
+
+        // Tamper with the data portion
+        const tamperedPacket = Buffer.from(packet);
+        tamperedPacket[HMAC_SIZE + 5] ^= 0xff;
+
+        const receivedHmac = tamperedPacket.slice(0, HMAC_SIZE);
+        const receivedData = tamperedPacket.slice(HMAC_SIZE);
+
+        expect(verifyHmac(receivedData, receivedHmac, validSecretKey)).toBe(false);
+      });
     });
   });
 });

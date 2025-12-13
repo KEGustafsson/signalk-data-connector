@@ -7,7 +7,7 @@ const zlib = require("node:zlib");
 const dgram = require("dgram");
 const crypto = require("crypto");
 const msgpack = require("@msgpack/msgpack");
-const { encrypt, decrypt } = require("./crypto");
+const { encrypt, decrypt, createHmac, verifyHmac, HMAC_SIZE } = require("./crypto");
 const { encodeDelta, decodeDelta, getAllPaths, PATH_CATEGORIES } = require("./pathDictionary");
 const Monitor = require("ping-monitor");
 
@@ -1058,11 +1058,19 @@ module.exports = function createPlugin(app) {
               return;
             }
             if (finalDelta) {
+              let packetToSend = finalDelta;
+
+              // Add HMAC if enabled (prepend 32-byte signature)
+              if (pluginOptions.useHmac) {
+                const hmac = createHmac(finalDelta, secretKey);
+                packetToSend = Buffer.concat([hmac, finalDelta]);
+              }
+
               // Track bandwidth
-              metrics.bandwidth.bytesOut += finalDelta.length;
+              metrics.bandwidth.bytesOut += packetToSend.length;
               metrics.bandwidth.packetsOut++;
 
-              udpSend(finalDelta, udpAddress, udpPort);
+              udpSend(packetToSend, udpAddress, udpPort);
               metrics.deltasSent++;
             }
           });
@@ -1089,7 +1097,31 @@ module.exports = function createPlugin(app) {
     metrics.bandwidth.bytesIn += delta.length;
     metrics.bandwidth.packetsIn++;
 
-    zlib.brotliDecompress(delta, (err, decompressedDelta) => {
+    let dataToProcess = delta;
+
+    // Verify HMAC if enabled (first 32 bytes are signature)
+    if (pluginOptions.useHmac) {
+      if (delta.length <= HMAC_SIZE) {
+        app.error("HMAC verification failed: packet too small");
+        metrics.encryptionErrors++;
+        metrics.lastError = "HMAC verification failed: packet too small";
+        metrics.lastErrorTime = Date.now();
+        return;
+      }
+
+      const receivedHmac = delta.slice(0, HMAC_SIZE);
+      dataToProcess = delta.slice(HMAC_SIZE);
+
+      if (!verifyHmac(dataToProcess, receivedHmac, secretKey)) {
+        app.error("HMAC verification failed: invalid signature (tampered or wrong key)");
+        metrics.encryptionErrors++;
+        metrics.lastError = "HMAC verification failed: invalid signature";
+        metrics.lastErrorTime = Date.now();
+        return;
+      }
+    }
+
+    zlib.brotliDecompress(dataToProcess, (err, decompressedDelta) => {
       if (err) {
         app.error(`Brotli decompression error (stage 1): ${err.message}`);
         return;
@@ -1335,6 +1367,13 @@ module.exports = function createPlugin(app) {
         title: "Use Path Dictionary Encoding",
         description:
           "Replace common SignalK paths with short numeric IDs. Provides 10-20% bandwidth reduction. Both client and server must use the same setting.",
+        default: false
+      },
+      useHmac: {
+        type: "boolean",
+        title: "Use HMAC Authentication",
+        description:
+          "Add HMAC-SHA256 signature for message integrity verification. Detects tampering and wrong keys. Adds 32 bytes per packet. Both client and server must use the same setting.",
         default: false
       }
     },
