@@ -759,53 +759,63 @@ class DataConnectorConfig {
             <div class="config-section">
                 <div class="card server-mode-card">
                     <div class="card-header">
-                        <h2>🖥️ Server Mode Active</h2>
-                        <p>This plugin is running in Server Mode</p>
+                        <h2>Server Mode Active</h2>
+                        <p>This plugin is running in Server Mode - receiving data from clients</p>
                     </div>
                     <div class="card-content">
                         <div class="server-mode-info">
-                            <h3>Server Mode Information</h3>
-                            <p>This SignalK Data Connector instance is configured to <strong>receive encrypted data</strong> from client devices.</p>
-                            
-                            <div class="info-grid">
+                            <div class="info-grid compact">
                                 <div class="info-item">
-                                    <h4>🔧 Configuration</h4>
-                                    <p>Server mode configuration is managed through the SignalK server plugin settings. No additional webapp configuration is required.</p>
+                                    <h4>Configuration</h4>
+                                    <p>Managed through SignalK plugin settings</p>
                                 </div>
-                                
                                 <div class="info-item">
-                                    <h4>📡 Network</h4>
-                                    <p>The server is listening for encrypted UDP data transmissions from client devices on the configured port.</p>
-                                </div>
-                                
-                                <div class="info-item">
-                                    <h4>🔐 Security</h4>
-                                    <p>All incoming data is automatically decrypted using the configured secret key and integrated into the SignalK data stream.</p>
-                                </div>
-                                
-                                <div class="info-item">
-                                    <h4>📊 Data Flow</h4>
-                                    <p><strong>Client Devices → Server (This Instance) → SignalK Data Stream</strong></p>
+                                    <h4>Data Flow</h4>
+                                    <p>Client Devices → Server → SignalK</p>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-                            <div class="server-status">
-                                <h4>Current Status</h4>
-                                <div class="status-indicator success">✓ Server is active and listening for client connections</div>
-                            </div>
+            <div class="config-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Bandwidth Monitor</h2>
+                        <p class="subtitle">Real-time data reception statistics</p>
+                    </div>
+                    <div class="card-content">
+                        <div id="bandwidth" class="bandwidth-info">
+                            <p>Loading bandwidth data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-                            <div id="metrics" class="metrics-section"></div>
+            <div class="config-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Path Analytics</h2>
+                        <p class="subtitle">Data volume by subscription path</p>
+                    </div>
+                    <div class="card-content">
+                        <div id="pathAnalytics" class="path-analytics-info">
+                            <p>Loading path analytics...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-                            <div class="configuration-note">
-                                <h4>💡 Need to Configure?</h4>
-                                <p>To modify server settings (UDP port, encryption key, etc.), use the SignalK server's plugin configuration interface:</p>
-                                <ol>
-                                    <li>Go to SignalK Admin Panel</li>
-                                    <li>Navigate to Plugin Config</li>
-                                    <li>Find "Signal K Data Connector"</li>
-                                    <li>Adjust settings as needed</li>
-                                </ol>
-                            </div>
+            <div class="config-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Performance Metrics</h2>
+                        <p class="subtitle">Real-time statistics (auto-refreshes every 5 seconds)</p>
+                    </div>
+                    <div class="card-content">
+                        <div id="metrics" class="metrics-info">
+                            <p>Loading metrics...</p>
                         </div>
                     </div>
                 </div>
