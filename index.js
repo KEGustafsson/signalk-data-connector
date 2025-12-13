@@ -538,8 +538,12 @@ module.exports = function createPlugin(app) {
       metrics.bandwidth.rateOut = Math.round(bytesDeltaOut / elapsed);
       metrics.bandwidth.rateIn = Math.round(bytesDeltaIn / elapsed);
 
-      // Update compression ratio
-      if (metrics.bandwidth.bytesOutRaw > 0) {
+      // Update compression ratio (client: bytesOut/bytesOutRaw, server: bytesIn/bytesInRaw)
+      if (isServerMode && metrics.bandwidth.bytesInRaw > 0) {
+        metrics.bandwidth.compressionRatio = Math.round(
+          (1 - metrics.bandwidth.bytesIn / metrics.bandwidth.bytesInRaw) * 100
+        );
+      } else if (!isServerMode && metrics.bandwidth.bytesOutRaw > 0) {
         metrics.bandwidth.compressionRatio = Math.round(
           (1 - metrics.bandwidth.bytesOut / metrics.bandwidth.bytesOutRaw) * 100
         );
@@ -674,14 +678,20 @@ module.exports = function createPlugin(app) {
           rateOutFormatted: formatBytes(metrics.bandwidth.rateOut) + "/s",
           rateInFormatted: formatBytes(metrics.bandwidth.rateIn) + "/s",
           compressionRatio: metrics.bandwidth.compressionRatio,
-          avgPacketSize:
-            metrics.bandwidth.packetsOut > 0
+          avgPacketSize: isServerMode
+            ? (metrics.bandwidth.packetsIn > 0
+              ? Math.round(metrics.bandwidth.bytesIn / metrics.bandwidth.packetsIn)
+              : 0)
+            : (metrics.bandwidth.packetsOut > 0
               ? Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut)
-              : 0,
-          avgPacketSizeFormatted:
-            metrics.bandwidth.packetsOut > 0
+              : 0),
+          avgPacketSizeFormatted: isServerMode
+            ? (metrics.bandwidth.packetsIn > 0
+              ? formatBytes(Math.round(metrics.bandwidth.bytesIn / metrics.bandwidth.packetsIn))
+              : "0 B")
+            : (metrics.bandwidth.packetsOut > 0
               ? formatBytes(Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut))
-              : "0 B",
+              : "0 B"),
           history: metrics.bandwidth.history.slice(-30) // Last 30 data points for chart
         },
         pathStats: pathStatsArray,
@@ -1163,6 +1173,9 @@ module.exports = function createPlugin(app) {
                 deltaMessage = decodeDelta(deltaMessage);
               }
 
+              // Track path stats for server-side analytics
+              trackPathStats(deltaMessage);
+
               app.handleMessage("", deltaMessage);
               app.debug(JSON.stringify(deltaMessage, null, 2));
               metrics.deltasReceived++;
@@ -1228,6 +1241,44 @@ module.exports = function createPlugin(app) {
     unsubscribes = [];
     localSubscription = null;
     pluginOptions = null;
+
+    // Reset state variables for clean restart
+    isServerMode = false;
+    readyToSend = false;
+    deltas = [];
+    lastDeltaTimerHash = null;
+    lastSubscriptionHash = null;
+    lastSentenceFilterHash = null;
+    excludedSentences = ["GSV"];
+
+    // Reset metrics for fresh start
+    metrics.startTime = Date.now();
+    metrics.deltasSent = 0;
+    metrics.deltasReceived = 0;
+    metrics.udpSendErrors = 0;
+    metrics.udpRetries = 0;
+    metrics.compressionErrors = 0;
+    metrics.encryptionErrors = 0;
+    metrics.subscriptionErrors = 0;
+    metrics.lastError = null;
+    metrics.lastErrorTime = null;
+    metrics.bandwidth.bytesOut = 0;
+    metrics.bandwidth.bytesIn = 0;
+    metrics.bandwidth.bytesOutRaw = 0;
+    metrics.bandwidth.bytesInRaw = 0;
+    metrics.bandwidth.packetsOut = 0;
+    metrics.bandwidth.packetsIn = 0;
+    metrics.bandwidth.lastBytesOut = 0;
+    metrics.bandwidth.lastBytesIn = 0;
+    metrics.bandwidth.lastRateCalcTime = Date.now();
+    metrics.bandwidth.rateOut = 0;
+    metrics.bandwidth.rateIn = 0;
+    metrics.bandwidth.compressionRatio = 0;
+    metrics.bandwidth.history = [];
+    metrics.pathStats.clear();
+
+    // Clear rate limit map
+    rateLimitMap.clear();
 
     // Clear intervals and timeouts
     clearInterval(helloMessageSender);
