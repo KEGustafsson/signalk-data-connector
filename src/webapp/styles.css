@@ -310,6 +310,11 @@ body {
   color: var(--dark-color);
 }
 
+.status-indicator.info {
+  background-color: var(--secondary-color);
+  color: white;
+}
+
 .status-details {
   margin-top: 0.5rem;
   padding: 0.5rem;

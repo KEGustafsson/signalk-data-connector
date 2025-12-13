@@ -310,6 +310,11 @@ body {
   color: var(--dark-color);
 }
 
+.status-indicator.info {
+  background-color: var(--secondary-color);
+  color: white;
+}
+
 .status-details {
   margin-top: 0.5rem;
   padding: 0.5rem;
@@ -863,4 +868,4 @@ body {
 }
 
 
-/*# sourceMappingURL=main.6f4dfbb765358ab9c068.css.map*/
+/*# sourceMappingURL=main.a6777eb21dbcc86e2023.css.map*/

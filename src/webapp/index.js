@@ -10,6 +10,7 @@ class DataConnectorConfig {
   constructor() {
     this.deltaTimerConfig = null;
     this.subscriptionConfig = null;
+    this.sentenceFilterConfig = null;
     this.isServerMode = false;
     this.metricsInterval = null;
     this.init();
@@ -56,6 +57,10 @@ class DataConnectorConfig {
       // Load subscription configuration
       const subResponse = await fetch("/plugins/signalk-data-connector/config/subscription.json");
       this.subscriptionConfig = await subResponse.json();
+
+      // Load sentence filter configuration
+      const filterResponse = await fetch("/plugins/signalk-data-connector/config/sentence_filter.json");
+      this.sentenceFilterConfig = await filterResponse.json();
     } catch (error) {
       this.showNotification("Error loading configurations: " + error.message, "error");
     }
@@ -70,6 +75,11 @@ class DataConnectorConfig {
     // Subscription save button
     document.getElementById("saveSubscription").addEventListener("click", () => {
       this.saveSubscription();
+    });
+
+    // Sentence filter save button
+    document.getElementById("saveSentenceFilter").addEventListener("click", () => {
+      this.saveSentenceFilter();
     });
 
     // Add path button
@@ -114,6 +124,12 @@ class DataConnectorConfig {
         null,
         2
       );
+    }
+
+    // Update sentence filter input
+    if (this.sentenceFilterConfig && Array.isArray(this.sentenceFilterConfig.excludedSentences)) {
+      document.getElementById("sentenceFilter").value =
+        this.sentenceFilterConfig.excludedSentences.join(", ");
     }
   }
 
@@ -253,6 +269,38 @@ class DataConnectorConfig {
       }
     } catch (error) {
       this.showNotification("Error saving subscription: " + error.message, "error");
+    }
+  }
+
+  async saveSentenceFilter() {
+    try {
+      const filterInput = document.getElementById("sentenceFilter").value;
+
+      // Parse comma-separated list, trim whitespace, filter empty values, uppercase
+      const excludedSentences = filterInput
+        .split(",")
+        .map((s) => s.trim().toUpperCase())
+        .filter((s) => s.length > 0);
+
+      const config = { excludedSentences: excludedSentences };
+
+      const response = await fetch("/plugins/signalk-data-connector/config/sentence_filter.json", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(config)
+      });
+
+      if (response.ok) {
+        this.sentenceFilterConfig = config;
+        this.showNotification("Sentence filter saved successfully!", "success");
+        this.updateStatus();
+      } else {
+        throw new Error("Failed to save configuration");
+      }
+    } catch (error) {
+      this.showNotification("Error saving sentence filter: " + error.message, "error");
     }
   }
 
@@ -671,8 +719,33 @@ class DataConnectorConfig {
     } else {
       statusHtml += `
                 <div class="status-item">
-                    <strong>Subscriptions:</strong> 
+                    <strong>Subscriptions:</strong>
                     <span class="status-indicator warning">⚠ Not configured</span>
+                </div>
+            `;
+    }
+
+    // Sentence filter status
+    if (
+      this.sentenceFilterConfig &&
+      this.sentenceFilterConfig.excludedSentences &&
+      this.sentenceFilterConfig.excludedSentences.length > 0
+    ) {
+      const filterCount = this.sentenceFilterConfig.excludedSentences.length;
+      statusHtml += `
+                <div class="status-item">
+                    <strong>Sentence Filter:</strong> ${filterCount} sentence(s) excluded
+                    <span class="status-indicator success">✓ Configured</span>
+                </div>
+                <div class="status-details">
+                    <strong>Excluded:</strong> ${this.sentenceFilterConfig.excludedSentences.join(", ")}
+                </div>
+            `;
+    } else {
+      statusHtml += `
+                <div class="status-item">
+                    <strong>Sentence Filter:</strong>
+                    <span class="status-indicator info">ℹ No filters (all sentences transmitted)</span>
                 </div>
             `;
     }

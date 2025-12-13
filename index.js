@@ -41,12 +41,15 @@ module.exports = function createPlugin(app) {
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
   let subscriptionFile;
+  let sentenceFilterFile;
 
   // File system watchers for configuration files
   let deltaTimerWatcher;
   let subscriptionWatcher;
+  let sentenceFilterWatcher;
   let deltaTimerDebounceTimer;
   let subscriptionDebounceTimer;
+  let sentenceFilterDebounceTimer;
 
   // Track server mode status
   let isServerMode = false;
@@ -54,6 +57,10 @@ module.exports = function createPlugin(app) {
   // Track last file content hashes to prevent duplicate processing
   let lastDeltaTimerHash = null;
   let lastSubscriptionHash = null;
+  let lastSentenceFilterHash = null;
+
+  // Sentence filter - list of NMEA sentences to exclude (e.g., GSV, GSA)
+  let excludedSentences = ["GSV"]; // Default: filter GSV (verbose satellite data)
 
   // Simple rate limiting for API endpoints
   const rateLimitMap = new Map(); // key: IP address, value: { count, resetTime }
@@ -180,6 +187,7 @@ module.exports = function createPlugin(app) {
   async function initializePersistentStorage() {
     deltaTimerFile = join(app.getDataDirPath(), "delta_timer.json");
     subscriptionFile = join(app.getDataDirPath(), "subscription.json");
+    sentenceFilterFile = join(app.getDataDirPath(), "sentence_filter.json");
 
     // Initialize delta timer file
     const deltaTimerData = await loadConfigFile(deltaTimerFile);
@@ -196,6 +204,18 @@ module.exports = function createPlugin(app) {
         subscribe: [{ path: "*" }]
       });
       app.debug("Initialized subscription.json with default values");
+    }
+
+    // Initialize sentence filter file
+    const sentenceFilterData = await loadConfigFile(sentenceFilterFile);
+    if (!sentenceFilterData) {
+      await saveConfigFile(sentenceFilterFile, {
+        excludedSentences: ["GSV"]
+      });
+      app.debug("Initialized sentence_filter.json with default values");
+    } else {
+      // Load existing sentence filter
+      excludedSentences = sentenceFilterData.excludedSentences || ["GSV"];
     }
   }
 
@@ -307,10 +327,10 @@ module.exports = function createPlugin(app) {
             },
             (delta) => {
               if (readyToSend) {
-                // Filter out GSV sentences if needed (satellite data can be verbose)
-                const isGsvSentence = delta?.updates?.[0]?.source?.sentence === "GSV";
-                if (isGsvSentence) {
-                  return; // Skip GSV sentences
+                // Filter out excluded sentences (configurable via sentence_filter.json)
+                const sentence = delta?.updates?.[0]?.source?.sentence;
+                if (sentence && excludedSentences.includes(sentence)) {
+                  return; // Skip excluded sentences
                 }
 
                 // Prevent memory leak by limiting buffer size
@@ -345,6 +365,40 @@ module.exports = function createPlugin(app) {
         }
       } catch (err) {
         app.error(`Error handling subscription change: ${err.message}`);
+      }
+    }, FILE_WATCH_DEBOUNCE_DELAY);
+  }
+
+  /**
+   * Handles sentence filter configuration changes with debouncing
+   * @returns {void}
+   */
+  function handleSentenceFilterChange() {
+    clearTimeout(sentenceFilterDebounceTimer);
+    sentenceFilterDebounceTimer = setTimeout(async () => {
+      try {
+        const content = await readFile(sentenceFilterFile, "utf-8");
+        const contentHash = crypto.createHash("sha256").update(content).digest("hex");
+
+        // Skip if content hasn't actually changed
+        if (contentHash === lastSentenceFilterHash) {
+          app.debug("Sentence filter file change detected but content unchanged, skipping");
+          return;
+        }
+        lastSentenceFilterHash = contentHash;
+
+        const filterConfig = JSON.parse(content);
+        if (filterConfig && Array.isArray(filterConfig.excludedSentences)) {
+          // Validate and normalize sentence names (uppercase, trimmed)
+          excludedSentences = filterConfig.excludedSentences
+            .map((s) => String(s).trim().toUpperCase())
+            .filter((s) => s.length > 0);
+          app.debug(`Sentence filter updated: excluding [${excludedSentences.join(", ")}]`);
+        } else {
+          app.error("Invalid sentence filter configuration: excludedSentences must be an array");
+        }
+      } catch (err) {
+        app.error(`Error handling sentence filter change: ${err.message}`);
       }
     }, FILE_WATCH_DEBOUNCE_DELAY);
   }
@@ -422,6 +476,40 @@ module.exports = function createPlugin(app) {
             app.debug("Subscription watcher recreated successfully");
           } catch (err) {
             app.error(`Failed to recreate subscription watcher: ${err.message}`);
+          }
+        }, 5000);
+      });
+
+      // Watch sentence_filter.json for changes
+      sentenceFilterWatcher = watch(sentenceFilterFile, (eventType) => {
+        if (eventType === "change") {
+          app.debug("Sentence filter configuration file changed");
+          handleSentenceFilterChange();
+        }
+      });
+
+      sentenceFilterWatcher.on("error", (error) => {
+        app.error(`Sentence filter watcher error: ${error.message}`);
+        if (sentenceFilterWatcher) {
+          sentenceFilterWatcher.close();
+          sentenceFilterWatcher = null;
+        }
+        // Attempt to recreate watcher after delay
+        setTimeout(() => {
+          app.debug("Attempting to recreate sentence filter watcher...");
+          try {
+            sentenceFilterWatcher = watch(sentenceFilterFile, (eventType) => {
+              if (eventType === "change") {
+                app.debug("Sentence filter configuration file changed");
+                handleSentenceFilterChange();
+              }
+            });
+            sentenceFilterWatcher.on("error", (err) => {
+              app.error(`Sentence filter watcher error after recovery: ${err.message}`);
+            });
+            app.debug("Sentence filter watcher recreated successfully");
+          } catch (err) {
+            app.error(`Failed to recreate sentence filter watcher: ${err.message}`);
           }
         }, 5000);
       });
@@ -641,11 +729,18 @@ module.exports = function createPlugin(app) {
       }
 
       const filename = req.params.filename;
-      if (!["delta_timer.json", "subscription.json"].includes(filename)) {
+      if (!["delta_timer.json", "subscription.json", "sentence_filter.json"].includes(filename)) {
         return res.status(400).json({ error: "Invalid filename" });
       }
 
-      const filePath = filename === "delta_timer.json" ? deltaTimerFile : subscriptionFile;
+      let filePath;
+      if (filename === "delta_timer.json") {
+        filePath = deltaTimerFile;
+      } else if (filename === "subscription.json") {
+        filePath = subscriptionFile;
+      } else {
+        filePath = sentenceFilterFile;
+      }
       res.contentType("application/json");
       const config = await loadConfigFile(filePath);
       res.send(JSON.stringify(config || {}));
@@ -675,11 +770,18 @@ module.exports = function createPlugin(app) {
       }
 
       const filename = req.params.filename;
-      if (!["delta_timer.json", "subscription.json"].includes(filename)) {
+      if (!["delta_timer.json", "subscription.json", "sentence_filter.json"].includes(filename)) {
         return res.status(400).json({ error: "Invalid filename" });
       }
 
-      const filePath = filename === "delta_timer.json" ? deltaTimerFile : subscriptionFile;
+      let filePath;
+      if (filename === "delta_timer.json") {
+        filePath = deltaTimerFile;
+      } else if (filename === "subscription.json") {
+        filePath = subscriptionFile;
+      } else {
+        filePath = sentenceFilterFile;
+      }
       const success = await saveConfigFile(filePath, req.body);
       if (success) {
         res.status(200).send("OK");
@@ -1090,6 +1192,7 @@ module.exports = function createPlugin(app) {
     clearTimeout(deltaTimer);
     clearTimeout(deltaTimerDebounceTimer);
     clearTimeout(subscriptionDebounceTimer);
+    clearTimeout(sentenceFilterDebounceTimer);
 
     // Stop file system watchers
     if (deltaTimerWatcher) {
@@ -1101,6 +1204,11 @@ module.exports = function createPlugin(app) {
       subscriptionWatcher.close();
       subscriptionWatcher = null;
       app.debug("Subscription file watcher closed");
+    }
+    if (sentenceFilterWatcher) {
+      sentenceFilterWatcher.close();
+      sentenceFilterWatcher = null;
+      app.debug("Sentence filter file watcher closed");
     }
 
     // Stop ping monitor
