@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 
 const algorithm = "aes-256-ctr";
+const HMAC_ALGORITHM = "sha256";
+const HMAC_SIZE = 32; // SHA-256 produces 32 bytes
 
 /**
  * Encrypts data using AES-256-CTR with a randomly generated IV per encryption
@@ -52,7 +54,51 @@ const decrypt = (hash, secretKey) => {
   return decrypted;
 };
 
+/**
+ * Creates an HMAC-SHA256 signature for the given data
+ * @param {Buffer} data - Data to sign
+ * @param {string} secretKey - 32-character secret key
+ * @returns {Buffer} 32-byte HMAC signature
+ * @throws {Error} If secretKey is invalid or data is empty
+ */
+const createHmac = (data, secretKey) => {
+  if (!secretKey || typeof secretKey !== "string" || secretKey.length !== 32) {
+    throw new Error("Secret key must be exactly 32 characters");
+  }
+  if (!data || (Buffer.isBuffer(data) && data.length === 0)) {
+    throw new Error("Data to sign cannot be empty");
+  }
+
+  const hmac = crypto.createHmac(HMAC_ALGORITHM, secretKey);
+  hmac.update(data);
+  return hmac.digest();
+};
+
+/**
+ * Verifies an HMAC-SHA256 signature
+ * @param {Buffer} data - Data that was signed
+ * @param {Buffer} signature - HMAC signature to verify
+ * @param {string} secretKey - 32-character secret key
+ * @returns {boolean} True if signature is valid
+ * @throws {Error} If secretKey is invalid
+ */
+const verifyHmac = (data, signature, secretKey) => {
+  if (!secretKey || typeof secretKey !== "string" || secretKey.length !== 32) {
+    throw new Error("Secret key must be exactly 32 characters");
+  }
+  if (!signature || signature.length !== HMAC_SIZE) {
+    return false;
+  }
+
+  const expected = createHmac(data, secretKey);
+  // Use timing-safe comparison to prevent timing attacks
+  return crypto.timingSafeEqual(signature, expected);
+};
+
 module.exports = {
   encrypt,
-  decrypt
+  decrypt,
+  createHmac,
+  verifyHmac,
+  HMAC_SIZE
 };

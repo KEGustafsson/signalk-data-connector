@@ -7,7 +7,7 @@ const zlib = require("node:zlib");
 const dgram = require("dgram");
 const crypto = require("crypto");
 const msgpack = require("@msgpack/msgpack");
-const { encrypt, decrypt } = require("./crypto");
+const { encrypt, decrypt, createHmac, verifyHmac, HMAC_SIZE } = require("./crypto");
 const { encodeDelta, decodeDelta, getAllPaths, PATH_CATEGORIES } = require("./pathDictionary");
 const Monitor = require("ping-monitor");
 
@@ -538,8 +538,12 @@ module.exports = function createPlugin(app) {
       metrics.bandwidth.rateOut = Math.round(bytesDeltaOut / elapsed);
       metrics.bandwidth.rateIn = Math.round(bytesDeltaIn / elapsed);
 
-      // Update compression ratio
-      if (metrics.bandwidth.bytesOutRaw > 0) {
+      // Update compression ratio (client: bytesOut/bytesOutRaw, server: bytesIn/bytesInRaw)
+      if (isServerMode && metrics.bandwidth.bytesInRaw > 0) {
+        metrics.bandwidth.compressionRatio = Math.round(
+          (1 - metrics.bandwidth.bytesIn / metrics.bandwidth.bytesInRaw) * 100
+        );
+      } else if (!isServerMode && metrics.bandwidth.bytesOutRaw > 0) {
         metrics.bandwidth.compressionRatio = Math.round(
           (1 - metrics.bandwidth.bytesOut / metrics.bandwidth.bytesOutRaw) * 100
         );
@@ -606,6 +610,12 @@ module.exports = function createPlugin(app) {
   plugin.registerWithRouter = (router) => {
     // Metrics endpoint (available in both client and server mode)
     router.get("/metrics", (req, res) => {
+      // Rate limiting
+      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
+      if (!checkRateLimit(clientIp)) {
+        return res.status(429).json({ error: "Too many requests, please try again later" });
+      }
+
       // Update rates before responding
       updateBandwidthRates();
 
@@ -668,14 +678,20 @@ module.exports = function createPlugin(app) {
           rateOutFormatted: formatBytes(metrics.bandwidth.rateOut) + "/s",
           rateInFormatted: formatBytes(metrics.bandwidth.rateIn) + "/s",
           compressionRatio: metrics.bandwidth.compressionRatio,
-          avgPacketSize:
-            metrics.bandwidth.packetsOut > 0
+          avgPacketSize: isServerMode
+            ? (metrics.bandwidth.packetsIn > 0
+              ? Math.round(metrics.bandwidth.bytesIn / metrics.bandwidth.packetsIn)
+              : 0)
+            : (metrics.bandwidth.packetsOut > 0
               ? Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut)
-              : 0,
-          avgPacketSizeFormatted:
-            metrics.bandwidth.packetsOut > 0
+              : 0),
+          avgPacketSizeFormatted: isServerMode
+            ? (metrics.bandwidth.packetsIn > 0
+              ? formatBytes(Math.round(metrics.bandwidth.bytesIn / metrics.bandwidth.packetsIn))
+              : "0 B")
+            : (metrics.bandwidth.packetsOut > 0
               ? formatBytes(Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut))
-              : "0 B",
+              : "0 B"),
           history: metrics.bandwidth.history.slice(-30) // Last 30 data points for chart
         },
         pathStats: pathStatsArray,
@@ -694,6 +710,12 @@ module.exports = function createPlugin(app) {
 
     // Signal K paths dictionary endpoint
     router.get("/paths", (req, res) => {
+      // Rate limiting
+      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
+      if (!checkRateLimit(clientIp)) {
+        return res.status(429).json({ error: "Too many requests, please try again later" });
+      }
+
       const paths = getAllPaths();
       const categorized = {};
 
@@ -1046,11 +1068,19 @@ module.exports = function createPlugin(app) {
               return;
             }
             if (finalDelta) {
+              let packetToSend = finalDelta;
+
+              // Add HMAC if enabled (prepend 32-byte signature)
+              if (pluginOptions.useHmac) {
+                const hmac = createHmac(finalDelta, secretKey);
+                packetToSend = Buffer.concat([hmac, finalDelta]);
+              }
+
               // Track bandwidth
-              metrics.bandwidth.bytesOut += finalDelta.length;
+              metrics.bandwidth.bytesOut += packetToSend.length;
               metrics.bandwidth.packetsOut++;
 
-              udpSend(finalDelta, udpAddress, udpPort);
+              udpSend(packetToSend, udpAddress, udpPort);
               metrics.deltasSent++;
             }
           });
@@ -1077,7 +1107,31 @@ module.exports = function createPlugin(app) {
     metrics.bandwidth.bytesIn += delta.length;
     metrics.bandwidth.packetsIn++;
 
-    zlib.brotliDecompress(delta, (err, decompressedDelta) => {
+    let dataToProcess = delta;
+
+    // Verify HMAC if enabled (first 32 bytes are signature)
+    if (pluginOptions.useHmac) {
+      if (delta.length <= HMAC_SIZE) {
+        app.error("HMAC verification failed: packet too small");
+        metrics.encryptionErrors++;
+        metrics.lastError = "HMAC verification failed: packet too small";
+        metrics.lastErrorTime = Date.now();
+        return;
+      }
+
+      const receivedHmac = delta.slice(0, HMAC_SIZE);
+      dataToProcess = delta.slice(HMAC_SIZE);
+
+      if (!verifyHmac(dataToProcess, receivedHmac, secretKey)) {
+        app.error("HMAC verification failed: invalid signature (tampered or wrong key)");
+        metrics.encryptionErrors++;
+        metrics.lastError = "HMAC verification failed: invalid signature";
+        metrics.lastErrorTime = Date.now();
+        return;
+      }
+    }
+
+    zlib.brotliDecompress(dataToProcess, (err, decompressedDelta) => {
       if (err) {
         app.error(`Brotli decompression error (stage 1): ${err.message}`);
         return;
@@ -1118,6 +1172,9 @@ module.exports = function createPlugin(app) {
               if (pluginOptions.usePathDictionary) {
                 deltaMessage = decodeDelta(deltaMessage);
               }
+
+              // Track path stats for server-side analytics
+              trackPathStats(deltaMessage);
 
               app.handleMessage("", deltaMessage);
               app.debug(JSON.stringify(deltaMessage, null, 2));
@@ -1184,6 +1241,44 @@ module.exports = function createPlugin(app) {
     unsubscribes = [];
     localSubscription = null;
     pluginOptions = null;
+
+    // Reset state variables for clean restart
+    isServerMode = false;
+    readyToSend = false;
+    deltas = [];
+    lastDeltaTimerHash = null;
+    lastSubscriptionHash = null;
+    lastSentenceFilterHash = null;
+    excludedSentences = ["GSV"];
+
+    // Reset metrics for fresh start
+    metrics.startTime = Date.now();
+    metrics.deltasSent = 0;
+    metrics.deltasReceived = 0;
+    metrics.udpSendErrors = 0;
+    metrics.udpRetries = 0;
+    metrics.compressionErrors = 0;
+    metrics.encryptionErrors = 0;
+    metrics.subscriptionErrors = 0;
+    metrics.lastError = null;
+    metrics.lastErrorTime = null;
+    metrics.bandwidth.bytesOut = 0;
+    metrics.bandwidth.bytesIn = 0;
+    metrics.bandwidth.bytesOutRaw = 0;
+    metrics.bandwidth.bytesInRaw = 0;
+    metrics.bandwidth.packetsOut = 0;
+    metrics.bandwidth.packetsIn = 0;
+    metrics.bandwidth.lastBytesOut = 0;
+    metrics.bandwidth.lastBytesIn = 0;
+    metrics.bandwidth.lastRateCalcTime = Date.now();
+    metrics.bandwidth.rateOut = 0;
+    metrics.bandwidth.rateIn = 0;
+    metrics.bandwidth.compressionRatio = 0;
+    metrics.bandwidth.history = [];
+    metrics.pathStats.clear();
+
+    // Clear rate limit map
+    rateLimitMap.clear();
 
     // Clear intervals and timeouts
     clearInterval(helloMessageSender);
@@ -1323,6 +1418,13 @@ module.exports = function createPlugin(app) {
         title: "Use Path Dictionary Encoding",
         description:
           "Replace common SignalK paths with short numeric IDs. Provides 10-20% bandwidth reduction. Both client and server must use the same setting.",
+        default: false
+      },
+      useHmac: {
+        type: "boolean",
+        title: "Use HMAC Authentication",
+        description:
+          "Add HMAC-SHA256 signature for message integrity verification. Detects tampering and wrong keys. Adds 32 bytes per packet. Both client and server must use the same setting.",
         default: false
       }
     },

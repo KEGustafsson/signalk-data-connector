@@ -2,7 +2,7 @@
 
 A SignalK plugin for secure, encrypted UDP data transmission with advanced bandwidth optimization.
 
-[![Tests](https://img.shields.io/badge/tests-74%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
+[![Tests](https://img.shields.io/badge/tests-130%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen)](https://nodejs.org/)
 
@@ -11,11 +11,13 @@ A SignalK plugin for secure, encrypted UDP data transmission with advanced bandw
 ## Features
 
 - **AES-256-CTR Encryption**: Unique IV per message
+- **HMAC-SHA256 Authentication**: Optional message integrity verification
 - **Multi-Layer Compression**: Dual Brotli + MessagePack serialization
 - **Path Dictionary Encoding**: 170+ SignalK paths mapped to numeric IDs
 - **Real-time Monitoring**: Bandwidth dashboard, path analytics, performance metrics
 - **Configurable Filters**: Exclude NMEA sentences (GSV, GSA, etc.) to reduce bandwidth
 - **Client/Server Modes**: Sender or receiver operation with hot-reload configuration
+- **Rate Limiting**: API endpoint protection (20 req/min/IP)
 - **Connectivity Monitoring**: TCP ping with automatic reconnection
 
 ## Architecture
@@ -23,14 +25,16 @@ A SignalK plugin for secure, encrypted UDP data transmission with advanced bandw
 ### Client (Sender)
 
 ```
-Collect → Filter → Path Encode → MessagePack → Brotli → AES-256 → Brotli → UDP
+Collect → Filter → Path Encode → MessagePack → Brotli → AES-256 → Brotli → [HMAC] → UDP
 ```
 
 ### Server (Receiver)
 
 ```
-UDP → Brotli → AES-256 → Brotli → MessagePack → Path Decode → SignalK
+UDP → [HMAC Verify] → Brotli → AES-256 → Brotli → MessagePack → Path Decode → SignalK
 ```
+
+*[HMAC] steps are optional and enabled via configuration*
 
 ## Installation
 
@@ -51,6 +55,7 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
 1. Set mode to **server**
 2. Configure UDP port (1024-65535)
 3. Set 32-character encryption key
+4. Enable HMAC authentication (optional, must match client)
 
 ### Client Mode (Sender)
 
@@ -58,6 +63,7 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
 2. Configure:
    - Server IP address and UDP port
    - Same 32-character encryption key as server
+   - Enable HMAC authentication (must match server)
    - Test address and port for connectivity monitoring
    - Hello message interval (seconds)
    - Ping interval (minutes)
@@ -116,8 +122,11 @@ The encrypted & compressed UDP approach provides **70% bandwidth reduction** com
 ## Security
 
 - **AES-256-CTR** with unique IV per message
+- **HMAC-SHA256** optional message authentication (detects tampering)
+- **Rate limiting** on API endpoints (20 requests/minute/IP)
 - **Input validation** on all configuration parameters
 - **XSS protection** in web UI
+- **Timing-safe comparison** for HMAC verification
 - **No credential storage**
 - **Stateless UDP** protocol
 
@@ -136,10 +145,11 @@ openssl rand -base64 32 | cut -c1-32
 ### Best Practices
 
 1. Use strong, randomly generated keys
-2. Never commit keys to version control
-3. Rotate keys periodically
-4. Monitor logs for connection issues
-5. Use firewall rules to restrict UDP access
+2. Enable HMAC for untrusted networks (adds 32 bytes per packet)
+3. Never commit keys to version control
+4. Rotate keys periodically
+5. Monitor logs for connection issues
+6. Use firewall rules to restrict UDP access
 
 ## Troubleshooting
 
@@ -158,6 +168,7 @@ openssl rand -base64 32 | cut -c1-32
 ### No Data Transmission
 
 - Confirm matching encryption keys on client and server
+- Verify HMAC setting matches on both client and server
 - Check UDP port configuration
 - Verify firewall allows UDP traffic on configured port
 - Confirm subscription paths are valid SignalK paths
@@ -185,7 +196,7 @@ Enable in SignalK plugin settings to see:
 ```bash
 npm run dev          # Development build with watch mode
 npm run build        # Production build with versioning
-npm test             # Run test suite (74 tests)
+npm test             # Run test suite (130 tests)
 npm run test:watch   # Run tests in watch mode
 npm run test:coverage # Generate coverage report
 npm run lint         # Check code style
@@ -201,7 +212,7 @@ signalk-data-connector/
 ├── crypto.js             # Encryption module
 ├── pathDictionary.js     # SignalK path encoding (170+ paths)
 ├── src/webapp/           # Web UI source
-├── __tests__/            # Test suite (74 tests)
+├── __tests__/            # Test suite (130 tests)
 └── public/               # Built UI files
 ```
 
