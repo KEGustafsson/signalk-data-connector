@@ -606,6 +606,12 @@ module.exports = function createPlugin(app) {
   plugin.registerWithRouter = (router) => {
     // Metrics endpoint (available in both client and server mode)
     router.get("/metrics", (req, res) => {
+      // Rate limiting
+      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
+      if (!checkRateLimit(clientIp)) {
+        return res.status(429).json({ error: "Too many requests, please try again later" });
+      }
+
       // Update rates before responding
       updateBandwidthRates();
 
@@ -694,6 +700,12 @@ module.exports = function createPlugin(app) {
 
     // Signal K paths dictionary endpoint
     router.get("/paths", (req, res) => {
+      // Rate limiting
+      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
+      if (!checkRateLimit(clientIp)) {
+        return res.status(429).json({ error: "Too many requests, please try again later" });
+      }
+
       const paths = getAllPaths();
       const categorized = {};
 
