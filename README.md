@@ -1,6 +1,6 @@
 # SignalK Data Connector
 
-A SignalK plugin for secure, encrypted UDP data transmission with dual-layer Brotli compression.
+A SignalK plugin for secure, encrypted UDP data transmission with advanced bandwidth optimization.
 
 [![Tests](https://img.shields.io/badge/tests-74%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -11,24 +11,25 @@ A SignalK plugin for secure, encrypted UDP data transmission with dual-layer Bro
 ## Features
 
 - **AES-256-CTR Encryption**: Unique IV per message
-- **Dual-Layer Brotli Compression**: 70% bandwidth reduction vs WebSocket
-- **Client/Server Modes**: Sender or receiver operation
-- **Real-time Configuration**: Web-based UI, no restart required
+- **Multi-Layer Compression**: Dual Brotli + MessagePack serialization
+- **Path Dictionary Encoding**: 170+ SignalK paths mapped to numeric IDs
+- **Real-time Monitoring**: Bandwidth dashboard, path analytics, performance metrics
+- **Configurable Filters**: Exclude NMEA sentences (GSV, GSA, etc.) to reduce bandwidth
+- **Client/Server Modes**: Sender or receiver operation with hot-reload configuration
 - **Connectivity Monitoring**: TCP ping with automatic reconnection
-- **Memory Safe**: Automatic buffer management and resource cleanup
 
 ## Architecture
 
 ### Client (Sender)
 
 ```
-Collect → Compress (Brotli) → Encrypt (AES-256) → Compress (Brotli) → UDP Send
+Collect → Filter → Path Encode → MessagePack → Brotli → AES-256 → Brotli → UDP
 ```
 
 ### Server (Receiver)
 
 ```
-UDP Receive → Decompress → Decrypt → Decompress → Forward to SignalK
+UDP → Brotli → AES-256 → Brotli → MessagePack → Path Decode → SignalK
 ```
 
 ## Installation
@@ -65,36 +66,36 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
    - Delta timer (100-10000ms)
    - Subscription paths
 
-### Web UI Configuration
+### Web UI
 
 Access via: `http://[signalk-server]:3000/plugins/signalk-data-connector`
 
-**Delta Timer** (`delta_timer.json`):
+**Client Mode Features:**
+- Delta Timer configuration (100-10000ms)
+- Subscription path management
+- Sentence filter (comma-separated: `GSV, GSA, VTG`)
+- Real-time bandwidth monitor with compression ratio
+- Path analytics with data volume breakdown
+- Performance metrics (errors, uptime, deltas sent)
 
-```json
-{
-  "deltaTimer": 1000
-}
-```
+**Server Mode Features:**
+- Bandwidth monitor (download rate, packets received)
+- Path analytics (incoming data breakdown)
+- Performance metrics (deltas received, errors)
 
-- Lower values: More frequent updates, higher bandwidth
-- Higher values: Better compression, lower bandwidth
+### Configuration Files
 
-**Subscribe data:**
-
-```json
-{
-  "context": "*",
-  "subscribe": [{ "path": "*" }]
-}
-```
+| File | Purpose |
+|------|---------|
+| `delta_timer.json` | Collection interval (ms) |
+| `subscription.json` | SignalK paths to subscribe |
+| `sentence_filter.json` | NMEA sentences to exclude |
 
 ### API Endpoints
 
-- `GET /plugins/signalk-data-connector/config/:filename` - Load configuration
-- `POST /plugins/signalk-data-connector/config/:filename` - Save configuration
-
-Valid filenames: `delta_timer.json`, `subscription.json`
+- `GET/POST /plugins/signalk-data-connector/config/:filename`
+- `GET /plugins/signalk-data-connector/metrics` - Real-time statistics
+- `GET /plugins/signalk-data-connector/paths` - Path dictionary info
 
 ## Performance
 
@@ -198,12 +199,9 @@ npm run format       # Format code with Prettier
 signalk-data-connector/
 ├── index.js              # Main plugin
 ├── crypto.js             # Encryption module
-├── webpack.config.js     # Build configuration
+├── pathDictionary.js     # SignalK path encoding (170+ paths)
 ├── src/webapp/           # Web UI source
-│   ├── index.js
-│   ├── index.html
-│   └── styles.css
-├── __tests__/            # Test suite
+├── __tests__/            # Test suite (74 tests)
 └── public/               # Built UI files
 ```
 
