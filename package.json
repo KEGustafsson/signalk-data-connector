@@ -25,6 +25,7 @@
     "format": "prettier --write \"**/*.{js,json,md}\""
   },
   "dependencies": {
+    "@msgpack/msgpack": "^3.0.0",
     "ping-monitor": "^0.8.2"
   },
   "devDependencies": {

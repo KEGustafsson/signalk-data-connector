@@ -6,7 +6,9 @@ const { join } = require("path");
 const zlib = require("node:zlib");
 const dgram = require("dgram");
 const crypto = require("crypto");
+const msgpack = require("@msgpack/msgpack");
 const { encrypt, decrypt } = require("./crypto");
+const { encodeDelta, decodeDelta, getAllPaths, PATH_CATEGORIES } = require("./pathDictionary");
 const Monitor = require("ping-monitor");
 
 module.exports = function createPlugin(app) {
@@ -70,8 +72,29 @@ module.exports = function createPlugin(app) {
     encryptionErrors: 0,
     subscriptionErrors: 0,
     lastError: null,
-    lastErrorTime: null
+    lastErrorTime: null,
+    // Bandwidth tracking
+    bandwidth: {
+      bytesOut: 0, // Compressed bytes sent
+      bytesIn: 0, // Compressed bytes received
+      bytesOutRaw: 0, // Raw bytes before compression
+      bytesInRaw: 0, // Raw bytes after decompression
+      packetsOut: 0,
+      packetsIn: 0,
+      lastBytesOut: 0, // For rate calculation
+      lastBytesIn: 0,
+      lastRateCalcTime: Date.now(),
+      rateOut: 0, // bytes per second
+      rateIn: 0,
+      compressionRatio: 0, // percentage saved
+      history: [] // Last N measurements for charting
+    },
+    // Path-level analytics
+    pathStats: new Map() // path -> { count, bytes, lastUpdate }
   };
+
+  // Bandwidth history settings
+  const BANDWIDTH_HISTORY_MAX = 60; // Keep 60 data points (5 minutes at 5s intervals)
 
   // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
@@ -413,14 +436,114 @@ module.exports = function createPlugin(app) {
     }
   }
 
+  /**
+   * Calculates bandwidth rates and updates history
+   */
+  function updateBandwidthRates() {
+    const now = Date.now();
+    const elapsed = (now - metrics.bandwidth.lastRateCalcTime) / 1000; // seconds
+
+    if (elapsed > 0) {
+      const bytesDeltaOut = metrics.bandwidth.bytesOut - metrics.bandwidth.lastBytesOut;
+      const bytesDeltaIn = metrics.bandwidth.bytesIn - metrics.bandwidth.lastBytesIn;
+
+      metrics.bandwidth.rateOut = Math.round(bytesDeltaOut / elapsed);
+      metrics.bandwidth.rateIn = Math.round(bytesDeltaIn / elapsed);
+
+      // Update compression ratio
+      if (metrics.bandwidth.bytesOutRaw > 0) {
+        metrics.bandwidth.compressionRatio = Math.round(
+          (1 - metrics.bandwidth.bytesOut / metrics.bandwidth.bytesOutRaw) * 100
+        );
+      }
+
+      // Add to history
+      metrics.bandwidth.history.push({
+        timestamp: now,
+        rateOut: metrics.bandwidth.rateOut,
+        rateIn: metrics.bandwidth.rateIn,
+        compressionRatio: metrics.bandwidth.compressionRatio
+      });
+
+      // Trim history
+      if (metrics.bandwidth.history.length > BANDWIDTH_HISTORY_MAX) {
+        metrics.bandwidth.history.shift();
+      }
+
+      metrics.bandwidth.lastBytesOut = metrics.bandwidth.bytesOut;
+      metrics.bandwidth.lastBytesIn = metrics.bandwidth.bytesIn;
+      metrics.bandwidth.lastRateCalcTime = now;
+    }
+  }
+
+  /**
+   * Tracks path-level statistics
+   * @param {Object} delta - The delta object to analyze
+   */
+  function trackPathStats(delta) {
+    if (!delta || !delta.updates) {return;}
+
+    const deltaSize = JSON.stringify(delta).length;
+
+    for (const update of delta.updates) {
+      if (update.values) {
+        for (const value of update.values) {
+          if (value.path) {
+            const path = value.path;
+            const stats = metrics.pathStats.get(path) || { count: 0, bytes: 0, lastUpdate: 0 };
+            stats.count++;
+            stats.bytes += Math.round(deltaSize / update.values.length); // Approximate bytes per path
+            stats.lastUpdate = Date.now();
+            metrics.pathStats.set(path, stats);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Formats bytes to human readable string
+   * @param {number} bytes - Number of bytes
+   * @returns {string} Formatted string
+   */
+  function formatBytes(bytes) {
+    if (bytes === 0) {return "0 B";}
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  }
+
   // Register web routes - needs to be defined before start() is called
   plugin.registerWithRouter = (router) => {
     // Metrics endpoint (available in both client and server mode)
     router.get("/metrics", (req, res) => {
+      // Update rates before responding
+      updateBandwidthRates();
+
       const uptime = Date.now() - metrics.startTime;
       const uptimeSeconds = Math.floor(uptime / 1000);
       const uptimeMinutes = Math.floor(uptimeSeconds / 60);
       const uptimeHours = Math.floor(uptimeMinutes / 60);
+
+      // Convert pathStats Map to sorted array
+      const pathStatsArray = Array.from(metrics.pathStats.entries())
+        .map(([path, stats]) => ({
+          path,
+          count: stats.count,
+          bytes: stats.bytes,
+          bytesFormatted: formatBytes(stats.bytes),
+          lastUpdate: stats.lastUpdate,
+          updatesPerMinute: uptimeSeconds > 0 ? Math.round((stats.count / uptimeSeconds) * 60) : 0
+        }))
+        .sort((a, b) => b.bytes - a.bytes) // Sort by bytes descending
+        .slice(0, 50); // Top 50 paths
+
+      // Calculate total bytes for percentage
+      const totalPathBytes = pathStatsArray.reduce((sum, p) => sum + p.bytes, 0);
+      pathStatsArray.forEach((p) => {
+        p.percentage = totalPathBytes > 0 ? Math.round((p.bytes / totalPathBytes) * 100) : 0;
+      });
 
       const metricsData = {
         uptime: {
@@ -442,6 +565,33 @@ module.exports = function createPlugin(app) {
           readyToSend: readyToSend,
           deltasBuffered: deltas.length
         },
+        bandwidth: {
+          bytesOut: metrics.bandwidth.bytesOut,
+          bytesIn: metrics.bandwidth.bytesIn,
+          bytesOutRaw: metrics.bandwidth.bytesOutRaw,
+          bytesInRaw: metrics.bandwidth.bytesInRaw,
+          bytesOutFormatted: formatBytes(metrics.bandwidth.bytesOut),
+          bytesInFormatted: formatBytes(metrics.bandwidth.bytesIn),
+          bytesOutRawFormatted: formatBytes(metrics.bandwidth.bytesOutRaw),
+          packetsOut: metrics.bandwidth.packetsOut,
+          packetsIn: metrics.bandwidth.packetsIn,
+          rateOut: metrics.bandwidth.rateOut,
+          rateIn: metrics.bandwidth.rateIn,
+          rateOutFormatted: formatBytes(metrics.bandwidth.rateOut) + "/s",
+          rateInFormatted: formatBytes(metrics.bandwidth.rateIn) + "/s",
+          compressionRatio: metrics.bandwidth.compressionRatio,
+          avgPacketSize:
+            metrics.bandwidth.packetsOut > 0
+              ? Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut)
+              : 0,
+          avgPacketSizeFormatted:
+            metrics.bandwidth.packetsOut > 0
+              ? formatBytes(Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut))
+              : "0 B",
+          history: metrics.bandwidth.history.slice(-30) // Last 30 data points for chart
+        },
+        pathStats: pathStatsArray,
+        pathCategories: PATH_CATEGORIES,
         lastError: metrics.lastError
           ? {
             message: metrics.lastError,
@@ -452,6 +602,24 @@ module.exports = function createPlugin(app) {
       };
 
       res.json(metricsData);
+    });
+
+    // Signal K paths dictionary endpoint
+    router.get("/paths", (req, res) => {
+      const paths = getAllPaths();
+      const categorized = {};
+
+      for (const [key, category] of Object.entries(PATH_CATEGORIES)) {
+        categorized[key] = {
+          ...category,
+          paths: paths.filter((p) => p.startsWith(category.prefix))
+        };
+      }
+
+      res.json({
+        total: paths.length,
+        categories: categorized
+      });
     });
 
     // Config routes (only available in client mode)
@@ -692,11 +860,15 @@ module.exports = function createPlugin(app) {
   };
 
   /**
-   * Converts delta object to UTF-8 buffer
+   * Converts delta object to buffer (JSON or MessagePack)
    * @param {Object|Array} delta - Delta object or array to convert
-   * @returns {Buffer} UTF-8 encoded buffer
+   * @param {boolean} useMsgpack - Whether to use MessagePack serialization
+   * @returns {Buffer} Encoded buffer
    */
-  function deltaBuffer(delta) {
+  function deltaBuffer(delta, useMsgpack = false) {
+    if (useMsgpack) {
+      return Buffer.from(msgpack.encode(delta));
+    }
     return Buffer.from(JSON.stringify(delta), "utf8");
   }
 
@@ -711,10 +883,34 @@ module.exports = function createPlugin(app) {
    */
   function packCrypt(delta, secretKey, udpAddress, udpPort) {
     try {
-      const deltaBufferData = deltaBuffer(delta);
+      // Track path stats for each delta in the array
+      if (Array.isArray(delta)) {
+        delta.forEach((d) => trackPathStats(d));
+      } else {
+        trackPathStats(delta);
+      }
+
+      // Apply path dictionary encoding if enabled
+      let processedDelta = delta;
+      if (pluginOptions.usePathDictionary) {
+        if (Array.isArray(delta)) {
+          processedDelta = delta.map((d) => encodeDelta(d));
+        } else {
+          processedDelta = encodeDelta(delta);
+        }
+      }
+
+      // Serialize to buffer (JSON or MessagePack)
+      const deltaBufferData = deltaBuffer(processedDelta, pluginOptions.useMsgpack);
+
+      // Track raw bytes for compression ratio calculation
+      metrics.bandwidth.bytesOutRaw += deltaBufferData.length;
+
       const brotliOptions = {
         params: {
-          [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+          [zlib.constants.BROTLI_PARAM_MODE]: pluginOptions.useMsgpack
+            ? zlib.constants.BROTLI_MODE_GENERIC
+            : zlib.constants.BROTLI_MODE_TEXT,
           [zlib.constants.BROTLI_PARAM_QUALITY]: 10,
           [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBufferData.length
         }
@@ -748,6 +944,10 @@ module.exports = function createPlugin(app) {
               return;
             }
             if (finalDelta) {
+              // Track bandwidth
+              metrics.bandwidth.bytesOut += finalDelta.length;
+              metrics.bandwidth.packetsOut++;
+
               udpSend(finalDelta, udpAddress, udpPort);
               metrics.deltasSent++;
             }
@@ -771,6 +971,10 @@ module.exports = function createPlugin(app) {
    * @returns {void}
    */
   function unpackDecrypt(delta, secretKey) {
+    // Track incoming bandwidth
+    metrics.bandwidth.bytesIn += delta.length;
+    metrics.bandwidth.packetsIn++;
+
     zlib.brotliDecompress(delta, (err, decompressedDelta) => {
       if (err) {
         app.error(`Brotli decompression error (stage 1): ${err.message}`);
@@ -786,19 +990,40 @@ module.exports = function createPlugin(app) {
             return;
           }
           try {
-            const jsonContent = JSON.parse(finalDelta.toString());
+            // Parse content (JSON or MessagePack)
+            let jsonContent;
+            if (pluginOptions.useMsgpack) {
+              try {
+                jsonContent = msgpack.decode(finalDelta);
+              } catch (msgpackErr) {
+                // Fallback to JSON if MessagePack fails
+                jsonContent = JSON.parse(finalDelta.toString());
+              }
+            } else {
+              jsonContent = JSON.parse(finalDelta.toString());
+            }
+
+            // Track raw bytes
+            metrics.bandwidth.bytesInRaw += finalDelta.length;
+
             const deltaCount = Object.keys(jsonContent).length;
 
             for (let i = 0; i < deltaCount; i++) {
               const jsonKey = Object.keys(jsonContent)[i];
-              const deltaMessage = jsonContent[jsonKey];
+              let deltaMessage = jsonContent[jsonKey];
+
+              // Decode path dictionary if enabled
+              if (pluginOptions.usePathDictionary) {
+                deltaMessage = decodeDelta(deltaMessage);
+              }
+
               app.handleMessage("", deltaMessage);
               app.debug(JSON.stringify(deltaMessage, null, 2));
               metrics.deltasReceived++;
             }
           } catch (parseError) {
-            app.error(`JSON parse error: ${parseError.message}`);
-            metrics.lastError = `JSON parse error: ${parseError.message}`;
+            app.error(`Parse error: ${parseError.message}`);
+            metrics.lastError = `Parse error: ${parseError.message}`;
             metrics.lastErrorTime = Date.now();
           }
         });
@@ -977,6 +1202,20 @@ module.exports = function createPlugin(app) {
         minimum: 0.1,
         maximum: 60,
         examples: [0.5, 1, 2, 5, 10]
+      },
+      useMsgpack: {
+        type: "boolean",
+        title: "Use MessagePack Serialization",
+        description:
+          "Enable MessagePack binary serialization instead of JSON. Provides 15-25% smaller payloads. Both client and server must use the same setting.",
+        default: false
+      },
+      usePathDictionary: {
+        type: "boolean",
+        title: "Use Path Dictionary Encoding",
+        description:
+          "Replace common SignalK paths with short numeric IDs. Provides 10-20% bandwidth reduction. Both client and server must use the same setting.",
+        default: false
       }
     },
     additionalProperties: false,

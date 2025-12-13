@@ -281,6 +281,13 @@ class DataConnectorConfig {
   }
 
   updateMetricsDisplay(metrics) {
+    // Update bandwidth display
+    this.updateBandwidthDisplay(metrics);
+
+    // Update path analytics display
+    this.updatePathAnalyticsDisplay(metrics);
+
+    // Update general metrics
     const metricsDiv = document.getElementById("metrics");
     if (!metricsDiv) {
       return;
@@ -401,6 +408,224 @@ class DataConnectorConfig {
     }
 
     metricsDiv.innerHTML = metricsHtml;
+  }
+
+  updateBandwidthDisplay(metrics) {
+    const bandwidthDiv = document.getElementById("bandwidth");
+    if (!bandwidthDiv || !metrics.bandwidth) {
+      return;
+    }
+
+    const bw = metrics.bandwidth;
+    const isClient = metrics.mode === "client";
+
+    // Calculate savings
+    const savedBytes = bw.bytesOutRaw - bw.bytesOut;
+    const savedFormatted = this.formatBytes(savedBytes > 0 ? savedBytes : 0);
+
+    const bandwidthHtml = `
+      <div class="bandwidth-dashboard">
+        <div class="bandwidth-hero">
+          <div class="hero-stat ${isClient ? "primary" : "secondary"}">
+            <div class="hero-value">${isClient ? bw.rateOutFormatted : bw.rateInFormatted}</div>
+            <div class="hero-label">${isClient ? "Upload Rate" : "Download Rate"}</div>
+          </div>
+          <div class="hero-stat success">
+            <div class="hero-value">${bw.compressionRatio}%</div>
+            <div class="hero-label">Compression Ratio</div>
+          </div>
+          <div class="hero-stat">
+            <div class="hero-value">${bw.avgPacketSizeFormatted}</div>
+            <div class="hero-label">Avg Packet Size</div>
+          </div>
+        </div>
+
+        <div class="bandwidth-details">
+          <h5>📊 Bandwidth Details</h5>
+          <div class="bandwidth-grid">
+            ${
+  isClient
+    ? `
+            <div class="bw-stat">
+              <span class="bw-label">Total Sent (Compressed):</span>
+              <span class="bw-value">${bw.bytesOutFormatted}</span>
+            </div>
+            <div class="bw-stat">
+              <span class="bw-label">Total Raw (Before Compression):</span>
+              <span class="bw-value">${bw.bytesOutRawFormatted}</span>
+            </div>
+            <div class="bw-stat highlight">
+              <span class="bw-label">Bandwidth Saved:</span>
+              <span class="bw-value success-text">${savedFormatted}</span>
+            </div>
+            <div class="bw-stat">
+              <span class="bw-label">Packets Sent:</span>
+              <span class="bw-value">${bw.packetsOut.toLocaleString()}</span>
+            </div>
+            `
+    : `
+            <div class="bw-stat">
+              <span class="bw-label">Total Received (Compressed):</span>
+              <span class="bw-value">${bw.bytesInFormatted}</span>
+            </div>
+            <div class="bw-stat">
+              <span class="bw-label">Packets Received:</span>
+              <span class="bw-value">${bw.packetsIn.toLocaleString()}</span>
+            </div>
+            `
+}
+          </div>
+        </div>
+
+        ${this.renderBandwidthChart(bw.history, isClient)}
+      </div>
+    `;
+
+    bandwidthDiv.innerHTML = bandwidthHtml;
+  }
+
+  renderBandwidthChart(history, isClient) {
+    if (!history || history.length < 2) {
+      return `
+        <div class="bandwidth-chart-placeholder">
+          <p>Collecting data for chart... (${history ? history.length : 0}/2 points)</p>
+        </div>
+      `;
+    }
+
+    // Simple SVG sparkline chart
+    const width = 100;
+    const height = 40;
+    const maxRate = Math.max(...history.map((h) => (isClient ? h.rateOut : h.rateIn)), 1);
+    const points = history
+      .map((h, i) => {
+        const x = (i / (history.length - 1)) * width;
+        const y = height - ((isClient ? h.rateOut : h.rateIn) / maxRate) * height;
+        return `${x},${y}`;
+      })
+      .join(" ");
+
+    const maxRateFormatted = this.formatBytes(maxRate);
+
+    return `
+      <div class="bandwidth-chart">
+        <h5>📈 Rate History (Last ${history.length * 5}s)</h5>
+        <div class="chart-container">
+          <svg viewBox="0 0 ${width} ${height}" class="sparkline" preserveAspectRatio="none">
+            <polyline
+              fill="none"
+              stroke="var(--primary-color)"
+              stroke-width="1.5"
+              points="${points}"
+            />
+          </svg>
+          <div class="chart-labels">
+            <span class="chart-max">${maxRateFormatted}/s</span>
+            <span class="chart-min">0</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  updatePathAnalyticsDisplay(metrics) {
+    const pathDiv = document.getElementById("pathAnalytics");
+    if (!pathDiv || !metrics.pathStats) {
+      return;
+    }
+
+    const paths = metrics.pathStats;
+
+    if (paths.length === 0) {
+      pathDiv.innerHTML = `
+        <div class="path-analytics-empty">
+          <p>No path data collected yet. Data will appear once deltas are transmitted.</p>
+        </div>
+      `;
+      return;
+    }
+
+    // Group by category
+    const categories = {};
+    paths.forEach((p) => {
+      const category = p.path.split(".")[0];
+      if (!categories[category]) {
+        categories[category] = { paths: [], totalBytes: 0, totalCount: 0 };
+      }
+      categories[category].paths.push(p);
+      categories[category].totalBytes += p.bytes;
+      categories[category].totalCount += p.count;
+    });
+
+    let pathHtml = `
+      <div class="path-analytics-dashboard">
+        <div class="path-summary">
+          <div class="summary-stat">
+            <span class="summary-value">${paths.length}</span>
+            <span class="summary-label">Active Paths</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-value">${Object.keys(categories).length}</span>
+            <span class="summary-label">Categories</span>
+          </div>
+        </div>
+
+        <div class="path-table-container">
+          <table class="path-table">
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Updates/min</th>
+                <th>Data Volume</th>
+                <th>% of Total</th>
+              </tr>
+            </thead>
+            <tbody>
+    `;
+
+    // Show top 15 paths
+    paths.slice(0, 15).forEach((p) => {
+      const barWidth = Math.max(p.percentage, 2); // Minimum 2% width for visibility
+      pathHtml += `
+        <tr>
+          <td class="path-name" title="${this.escapeHtml(p.path)}">${this.escapeHtml(p.path)}</td>
+          <td class="path-rate">${p.updatesPerMinute}</td>
+          <td class="path-bytes">${p.bytesFormatted}</td>
+          <td class="path-percentage">
+            <div class="percentage-bar-container">
+              <div class="percentage-bar" style="width: ${barWidth}%"></div>
+              <span class="percentage-text">${p.percentage}%</span>
+            </div>
+          </td>
+        </tr>
+      `;
+    });
+
+    pathHtml += `
+            </tbody>
+          </table>
+        </div>
+    `;
+
+    if (paths.length > 15) {
+      pathHtml += `
+        <div class="path-more">
+          <p>Showing top 15 of ${paths.length} paths</p>
+        </div>
+      `;
+    }
+
+    pathHtml += "</div>";
+
+    pathDiv.innerHTML = pathHtml;
+  }
+
+  formatBytes(bytes) {
+    if (bytes === 0) {return "0 B";}
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   }
 
   escapeHtml(text) {
