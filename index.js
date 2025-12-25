@@ -1100,6 +1100,12 @@ module.exports = function createPlugin(app) {
    */
   async function packCrypt(delta, secretKey, udpAddress, udpPort) {
     try {
+      // Guard against calls after plugin stop
+      if (!pluginOptions) {
+        app.debug("packCrypt called but plugin is stopped, ignoring");
+        return;
+      }
+
       // Apply path dictionary encoding if enabled
       let processedDelta = delta;
       if (pluginOptions.usePathDictionary) {
@@ -1140,8 +1146,8 @@ module.exports = function createPlugin(app) {
 
       // Check for MTU issues
       if (packet.length > MAX_SAFE_UDP_PAYLOAD) {
-        app.warn(
-          `Packet size ${packet.length} bytes exceeds safe MTU (${MAX_SAFE_UDP_PAYLOAD}), may fragment. ` +
+        app.debug(
+          `Warning: Packet size ${packet.length} bytes exceeds safe MTU (${MAX_SAFE_UDP_PAYLOAD}), may fragment. ` +
             "Consider reducing delta timer interval or filtering paths."
         );
       }
@@ -1182,6 +1188,12 @@ module.exports = function createPlugin(app) {
    */
   async function unpackDecrypt(packet, secretKey) {
     try {
+      // Guard against calls after plugin stop
+      if (!pluginOptions) {
+        app.debug("unpackDecrypt called but plugin is stopped, ignoring");
+        return;
+      }
+
       // Track incoming bandwidth
       metrics.bandwidth.bytesIn += packet.length;
       metrics.bandwidth.packetsIn++;
@@ -1217,9 +1229,21 @@ module.exports = function createPlugin(app) {
         const jsonKey = Object.keys(jsonContent)[i];
         let deltaMessage = jsonContent[jsonKey];
 
+        // Skip null or undefined delta messages
+        if (deltaMessage == null) {
+          app.debug(`Skipping null delta message at index ${i}`);
+          continue;
+        }
+
         // Decode path dictionary if enabled
         if (pluginOptions.usePathDictionary) {
           deltaMessage = decodeDelta(deltaMessage);
+        }
+
+        // Skip if decoding returned null
+        if (deltaMessage == null) {
+          app.debug(`Skipping null delta message after decoding at index ${i}`);
+          continue;
         }
 
         // Track path stats for server-side analytics (reuse size)
