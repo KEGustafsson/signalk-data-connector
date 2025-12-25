@@ -4,7 +4,7 @@ import "./styles.css";
 const DELTA_TIMER_MIN = 100;
 const DELTA_TIMER_MAX = 10000;
 const NOTIFICATION_TIMEOUT = 4000;
-const METRICS_REFRESH_INTERVAL = 5000; // 5 seconds
+const METRICS_REFRESH_INTERVAL = 15000; // 15 seconds (optimized from 5s to reduce server load)
 
 class DataConnectorConfig {
   constructor() {

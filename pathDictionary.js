@@ -392,49 +392,51 @@ function decodePath(id) {
 }
 
 /**
- * Encodes paths in a delta object
+ * Encodes paths in a delta object (optimized - no JSON stringify/parse)
  * @param {Object} delta - SignalK delta object
  * @returns {Object} Delta with encoded paths
  */
 function encodeDelta(delta) {
   if (!delta || !delta.updates) {return delta;}
 
-  const encoded = JSON.parse(JSON.stringify(delta)); // Deep clone
-
-  for (const update of encoded.updates) {
-    if (update.values) {
-      for (const value of update.values) {
-        if (value.path) {
-          value.path = encodePath(value.path);
-        }
-      }
-    }
-  }
-
-  return encoded;
+  // Structured clone - only clone what we need to modify
+  return {
+    context: delta.context,
+    updates: delta.updates.map((update) => ({
+      source: update.source,
+      timestamp: update.timestamp,
+      $source: update.$source,
+      values: update.values
+        ? update.values.map((value) =>
+          value.path ? { ...value, path: encodePath(value.path) } : { ...value }
+        )
+        : update.values
+    }))
+  };
 }
 
 /**
- * Decodes paths in a delta object
+ * Decodes paths in a delta object (optimized - no JSON stringify/parse)
  * @param {Object} delta - SignalK delta object with encoded paths
  * @returns {Object} Delta with decoded paths
  */
 function decodeDelta(delta) {
   if (!delta || !delta.updates) {return delta;}
 
-  const decoded = JSON.parse(JSON.stringify(delta)); // Deep clone
-
-  for (const update of decoded.updates) {
-    if (update.values) {
-      for (const value of update.values) {
-        if (value.path !== undefined) {
-          value.path = decodePath(value.path);
-        }
-      }
-    }
-  }
-
-  return decoded;
+  // Structured clone - only clone what we need to modify
+  return {
+    context: delta.context,
+    updates: delta.updates.map((update) => ({
+      source: update.source,
+      timestamp: update.timestamp,
+      $source: update.$source,
+      values: update.values
+        ? update.values.map((value) =>
+          value.path !== undefined ? { ...value, path: decodePath(value.path) } : { ...value }
+        )
+        : update.values
+    }))
+  };
 }
 
 /**

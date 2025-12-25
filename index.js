@@ -3,21 +3,70 @@
 const { access, readFile, writeFile } = require("fs").promises;
 const { watch } = require("fs");
 const { join } = require("path");
+const { promisify } = require("util");
 const zlib = require("node:zlib");
 const dgram = require("dgram");
 const crypto = require("crypto");
 const msgpack = require("@msgpack/msgpack");
-const { encrypt, decrypt, createHmac, verifyHmac, HMAC_SIZE } = require("./crypto");
+const {
+  encryptBinary,
+  decryptBinary,
+  validateSecretKey,
+  IV_LENGTH,
+  AUTH_TAG_LENGTH,
+  // Legacy support
+  encrypt,
+  decrypt,
+  createHmac,
+  verifyHmac,
+  HMAC_SIZE
+} = require("./crypto");
 const { encodeDelta, decodeDelta, getAllPaths, PATH_CATEGORIES } = require("./pathDictionary");
 const Monitor = require("ping-monitor");
 
+// Promisify zlib functions for async/await
+const brotliCompressAsync = promisify(zlib.brotliCompress);
+const brotliDecompressAsync = promisify(zlib.brotliDecompress);
+
+/**
+ * Circular buffer for efficient history tracking
+ */
+class CircularBuffer {
+  constructor(size) {
+    this.buffer = new Array(size);
+    this.size = size;
+    this.index = 0;
+    this.filled = false;
+  }
+
+  push(item) {
+    this.buffer[this.index] = item;
+    this.index = (this.index + 1) % this.size;
+    if (this.index === 0) {this.filled = true;}
+  }
+
+  toArray() {
+    if (!this.filled) {return this.buffer.slice(0, this.index);}
+    return [...this.buffer.slice(this.index), ...this.buffer.slice(0, this.index)];
+  }
+
+  get length() {
+    return this.filled ? this.size : this.index;
+  }
+}
+
 module.exports = function createPlugin(app) {
-  // Constants
+  // Constants - extracted magic numbers
   const DEFAULT_DELTA_TIMER = 1000; // milliseconds
   const PING_TIMEOUT_BUFFER = 10000; // milliseconds - extra buffer for ping timeout
   const MILLISECONDS_PER_MINUTE = 60000;
   const MAX_DELTAS_BUFFER_SIZE = 1000; // prevent memory leaks
   const FILE_WATCH_DEBOUNCE_DELAY = 300; // milliseconds - debounce delay for file watcher events
+  const MAX_SAFE_UDP_PAYLOAD = 1400; // Maximum safe UDP payload size (avoid fragmentation)
+  const BROTLI_QUALITY_HIGH = 10; // Maximum Brotli compression quality
+  const UDP_RETRY_MAX = 3; // Maximum UDP send retries
+  const UDP_RETRY_DELAY = 100; // milliseconds - base retry delay
+  const CONTENT_HASH_ALGORITHM = "md5"; // Faster than SHA-256 for file change detection
 
   const plugin = {};
   plugin.id = "signalk-data-connector";
@@ -37,6 +86,8 @@ module.exports = function createPlugin(app) {
   let deltasFixed = [];
   let timer = false;
   let pluginOptions; // Store options for access in event handlers
+  let lastPacketTime = 0; // Track last packet send time for hello message suppression
+  let currentBatchSize = 0; // Track current batch size for MTU optimization
 
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
@@ -69,6 +120,7 @@ module.exports = function createPlugin(app) {
   let rateLimitCleanupInterval; // Interval for cleaning up old rate limit entries
 
   // Metrics tracking
+  const BANDWIDTH_HISTORY_MAX = 60; // Keep 60 data points (5 minutes at 5s intervals)
   const metrics = {
     startTime: Date.now(),
     deltasSent: 0,
@@ -94,14 +146,11 @@ module.exports = function createPlugin(app) {
       rateOut: 0, // bytes per second
       rateIn: 0,
       compressionRatio: 0, // percentage saved
-      history: [] // Last N measurements for charting
+      history: new CircularBuffer(BANDWIDTH_HISTORY_MAX) // Efficient circular buffer
     },
     // Path-level analytics
     pathStats: new Map() // path -> { count, bytes, lastUpdate }
   };
-
-  // Bandwidth history settings
-  const BANDWIDTH_HISTORY_MAX = 60; // Keep 60 data points (5 minutes at 5s intervals)
 
   // eslint-disable-next-line no-unused-vars
   const setStatus = app.setPluginStatus || app.setProviderStatus;
@@ -241,7 +290,7 @@ module.exports = function createPlugin(app) {
     deltaTimerDebounceTimer = setTimeout(async () => {
       try {
         const content = await readFile(deltaTimerFile, "utf-8");
-        const contentHash = crypto.createHash("sha256").update(content).digest("hex");
+        const contentHash = crypto.createHash(CONTENT_HASH_ALGORITHM).update(content).digest("hex");
 
         // Skip if content hasn't actually changed (prevents duplicate processing)
         if (contentHash === lastDeltaTimerHash) {
@@ -295,7 +344,7 @@ module.exports = function createPlugin(app) {
 
         // Use content hashing instead of JSON.stringify comparison
         const configString = JSON.stringify(localSubscriptionNew);
-        const contentHash = crypto.createHash("sha256").update(configString).digest("hex");
+        const contentHash = crypto.createHash(CONTENT_HASH_ALGORITHM).update(configString).digest("hex");
 
         // Skip if content hasn't actually changed
         if (contentHash === lastSubscriptionHash) {
@@ -378,7 +427,7 @@ module.exports = function createPlugin(app) {
     sentenceFilterDebounceTimer = setTimeout(async () => {
       try {
         const content = await readFile(sentenceFilterFile, "utf-8");
-        const contentHash = crypto.createHash("sha256").update(content).digest("hex");
+        const contentHash = crypto.createHash(CONTENT_HASH_ALGORITHM).update(content).digest("hex");
 
         // Skip if content hasn't actually changed
         if (contentHash === lastSentenceFilterHash) {
@@ -525,7 +574,7 @@ module.exports = function createPlugin(app) {
   }
 
   /**
-   * Calculates bandwidth rates and updates history
+   * Calculates bandwidth rates and updates history (optimized with circular buffer)
    */
   function updateBandwidthRates() {
     const now = Date.now();
@@ -549,18 +598,13 @@ module.exports = function createPlugin(app) {
         );
       }
 
-      // Add to history
+      // Add to circular buffer history (no need to trim, it's automatic)
       metrics.bandwidth.history.push({
         timestamp: now,
         rateOut: metrics.bandwidth.rateOut,
         rateIn: metrics.bandwidth.rateIn,
         compressionRatio: metrics.bandwidth.compressionRatio
       });
-
-      // Trim history
-      if (metrics.bandwidth.history.length > BANDWIDTH_HISTORY_MAX) {
-        metrics.bandwidth.history.shift();
-      }
 
       metrics.bandwidth.lastBytesOut = metrics.bandwidth.bytesOut;
       metrics.bandwidth.lastBytesIn = metrics.bandwidth.bytesIn;
@@ -569,13 +613,15 @@ module.exports = function createPlugin(app) {
   }
 
   /**
-   * Tracks path-level statistics
+   * Tracks path-level statistics (optimized - accepts precomputed size)
    * @param {Object} delta - The delta object to analyze
+   * @param {number} deltaSize - Precomputed delta size (optional, for performance)
    */
-  function trackPathStats(delta) {
+  function trackPathStats(delta, deltaSize = null) {
     if (!delta || !delta.updates) {return;}
 
-    const deltaSize = JSON.stringify(delta).length;
+    // Use provided size or calculate if not provided (but avoid in hot path)
+    const size = deltaSize !== null ? deltaSize : JSON.stringify(delta).length;
 
     for (const update of delta.updates) {
       if (update.values) {
@@ -584,7 +630,7 @@ module.exports = function createPlugin(app) {
             const path = value.path;
             const stats = metrics.pathStats.get(path) || { count: 0, bytes: 0, lastUpdate: 0 };
             stats.count++;
-            stats.bytes += Math.round(deltaSize / update.values.length); // Approximate bytes per path
+            stats.bytes += Math.round(size / update.values.length); // Approximate bytes per path
             stats.lastUpdate = Date.now();
             metrics.pathStats.set(path, stats);
           }
@@ -606,6 +652,51 @@ module.exports = function createPlugin(app) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   }
 
+  /**
+   * Get top N paths by bytes (optimized partial sort)
+   * @param {Map} pathStats - Path statistics map
+   * @param {number} n - Number of top paths to return
+   * @param {number} uptimeSeconds - Plugin uptime in seconds
+   * @returns {Array} Top N paths sorted by bytes
+   */
+  function getTopNPaths(pathStats, n, uptimeSeconds) {
+    const entries = Array.from(pathStats.entries());
+    const result = [];
+
+    for (const [path, stats] of entries) {
+      const item = {
+        path,
+        count: stats.count,
+        bytes: stats.bytes,
+        bytesFormatted: formatBytes(stats.bytes),
+        lastUpdate: stats.lastUpdate,
+        updatesPerMinute: uptimeSeconds > 0 ? Math.round((stats.count / uptimeSeconds) * 60) : 0
+      };
+
+      if (result.length < n) {
+        result.push(item);
+        // Sort when we reach n items
+        if (result.length === n) {
+          result.sort((a, b) => b.bytes - a.bytes);
+        }
+      } else if (item.bytes > result[n - 1].bytes) {
+        // Replace smallest item and maintain sort
+        result[n - 1] = item;
+        // Insertion sort for small n is faster than full sort
+        for (let i = n - 1; i > 0 && result[i].bytes > result[i - 1].bytes; i--) {
+          [result[i], result[i - 1]] = [result[i - 1], result[i]];
+        }
+      }
+    }
+
+    // Final sort if less than n items
+    if (result.length < n && result.length > 0) {
+      result.sort((a, b) => b.bytes - a.bytes);
+    }
+
+    return result;
+  }
+
   // Register web routes - needs to be defined before start() is called
   plugin.registerWithRouter = (router) => {
     // Metrics endpoint (available in both client and server mode)
@@ -624,18 +715,8 @@ module.exports = function createPlugin(app) {
       const uptimeMinutes = Math.floor(uptimeSeconds / 60);
       const uptimeHours = Math.floor(uptimeMinutes / 60);
 
-      // Convert pathStats Map to sorted array
-      const pathStatsArray = Array.from(metrics.pathStats.entries())
-        .map(([path, stats]) => ({
-          path,
-          count: stats.count,
-          bytes: stats.bytes,
-          bytesFormatted: formatBytes(stats.bytes),
-          lastUpdate: stats.lastUpdate,
-          updatesPerMinute: uptimeSeconds > 0 ? Math.round((stats.count / uptimeSeconds) * 60) : 0
-        }))
-        .sort((a, b) => b.bytes - a.bytes) // Sort by bytes descending
-        .slice(0, 50); // Top 50 paths
+      // Get top 50 paths using optimized partial sort
+      const pathStatsArray = getTopNPaths(metrics.pathStats, 50, uptimeSeconds);
 
       // Calculate total bytes for percentage
       const totalPathBytes = pathStatsArray.reduce((sum, p) => sum + p.bytes, 0);
@@ -692,7 +773,7 @@ module.exports = function createPlugin(app) {
             : (metrics.bandwidth.packetsOut > 0
               ? formatBytes(Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut))
               : "0 B"),
-          history: metrics.bandwidth.history.slice(-30) // Last 30 data points for chart
+          history: metrics.bandwidth.history.toArray().slice(-30) // Last 30 data points for chart
         },
         pathStats: pathStatsArray,
         pathCategories: PATH_CATEGORIES,
@@ -818,11 +899,14 @@ module.exports = function createPlugin(app) {
     pluginOptions = options;
 
     // Validate required options
-    if (!options.secretKey || options.secretKey.length !== 32) {
-      app.error("Secret key must be exactly 32 characters");
-      setStatus("Secret key validation failed");
+    try {
+      validateSecretKey(options.secretKey);
+    } catch (error) {
+      app.error(`Secret key validation failed: ${error.message}`);
+      setStatus(`Secret key validation failed: ${error.message}`);
       return;
     }
+
     if (!options.udpPort || options.udpPort < 1024 || options.udpPort > 65535) {
       app.error("UDP port must be between 1024 and 65535");
       setStatus("UDP port validation failed");
@@ -880,27 +964,37 @@ module.exports = function createPlugin(app) {
       const deltaTimerTimeFile = await loadConfigFile(deltaTimerFile);
       deltaTimerTime = deltaTimerTimeFile ? deltaTimerTimeFile.deltaTimer : DEFAULT_DELTA_TIMER;
 
-      // helloMessageSender is needed due to nature of UDP. Sending vessel information pre-defined intervals
-      helloMessageSender = setInterval(() => {
-        const fixedDelta = {
-          context: "vessels.urn:mrn:imo:mmsi:" + app.getSelfPath("mmsi"),
-          updates: [
-            {
-              timestamp: new Date(Date.now()),
-              values: [
-                {
-                  path: "networking.modem.latencyTime",
-                  value: new Date(Date.now())
-                }
-              ]
-            }
-          ]
-        };
-        app.debug(JSON.stringify(fixedDelta, null, 2));
-        deltasFixed.push(fixedDelta);
-        packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
-        deltasFixed = [];
-      }, options.helloMessageSender * 1000);
+      // helloMessageSender with smart suppression - only send if no recent data transmission
+      // This prevents redundant heartbeats when data is actively flowing
+      const helloInterval = options.helloMessageSender * 1000;
+      helloMessageSender = setInterval(async () => {
+        const timeSinceLastPacket = Date.now() - lastPacketTime;
+
+        // Only send hello if no packet sent in the last interval
+        if (timeSinceLastPacket >= helloInterval) {
+          const fixedDelta = {
+            context: "vessels.urn:mrn:imo:mmsi:" + app.getSelfPath("mmsi"),
+            updates: [
+              {
+                timestamp: new Date(Date.now()),
+                values: [
+                  {
+                    path: "networking.modem.latencyTime",
+                    value: new Date(Date.now())
+                  }
+                ]
+              }
+            ]
+          };
+          app.debug("Sending hello message (no recent data transmission)");
+          app.debug(JSON.stringify(fixedDelta, null, 2));
+          deltasFixed.push(fixedDelta);
+          await packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
+          deltasFixed = [];
+        } else {
+          app.debug(`Skipping hello message (last packet ${timeSinceLastPacket}ms ago)`);
+        }
+      }, helloInterval);
 
       socketUdp = dgram.createSocket({ type: "udp4", reuseAddr: true });
 
@@ -997,23 +1091,17 @@ module.exports = function createPlugin(app) {
   }
 
   /**
-   * Compresses, encrypts, and sends delta data via UDP
-   * Based on testing, Compression -> Encryption -> Compression was the most efficient way to reduce size
+   * Compresses, encrypts, and sends delta data via UDP (optimized binary protocol)
+   * Pipeline: Serialize -> Compress -> Encrypt (with GCM auth) -> Send
+   * Removes inefficient second compression and JSON serialization of encrypted data
    * @param {Object|Array} delta - Delta data to send
    * @param {string} secretKey - 32-character encryption key
    * @param {string} udpAddress - Destination IP address
    * @param {number} udpPort - Destination UDP port
-   * @returns {void}
+   * @returns {Promise<void>}
    */
-  function packCrypt(delta, secretKey, udpAddress, udpPort) {
+  async function packCrypt(delta, secretKey, udpAddress, udpPort) {
     try {
-      // Track path stats for each delta in the array
-      if (Array.isArray(delta)) {
-        delta.forEach((d) => trackPathStats(d));
-      } else {
-        trackPathStats(delta);
-      }
-
       // Apply path dictionary encoding if enabled
       let processedDelta = delta;
       if (pluginOptions.usePathDictionary) {
@@ -1025,184 +1113,205 @@ module.exports = function createPlugin(app) {
       }
 
       // Serialize to buffer (JSON or MessagePack)
-      const deltaBufferData = deltaBuffer(processedDelta, pluginOptions.useMsgpack);
+      const serialized = deltaBuffer(processedDelta, pluginOptions.useMsgpack);
 
       // Track raw bytes for compression ratio calculation
-      metrics.bandwidth.bytesOutRaw += deltaBufferData.length;
+      metrics.bandwidth.bytesOutRaw += serialized.length;
 
-      const brotliOptions = {
+      // Track path stats AFTER serialization (reuse size for efficiency)
+      if (Array.isArray(delta)) {
+        delta.forEach((d) => trackPathStats(d, serialized.length / delta.length));
+      } else {
+        trackPathStats(delta, serialized.length);
+      }
+
+      // Single compression stage (before encryption)
+      const compressed = await brotliCompressAsync(serialized, {
         params: {
           [zlib.constants.BROTLI_PARAM_MODE]: pluginOptions.useMsgpack
             ? zlib.constants.BROTLI_MODE_GENERIC
             : zlib.constants.BROTLI_MODE_TEXT,
-          [zlib.constants.BROTLI_PARAM_QUALITY]: 10,
-          [zlib.constants.BROTLI_PARAM_SIZE_HINT]: deltaBufferData.length
-        }
-      };
-
-      zlib.brotliCompress(deltaBufferData, brotliOptions, (err, compressedDelta) => {
-        if (err) {
-          app.error(`Brotli compression error (stage 1): ${err.message}`);
-          metrics.compressionErrors++;
-          metrics.lastError = `Brotli compression error (stage 1): ${err.message}`;
-          metrics.lastErrorTime = Date.now();
-          return;
-        }
-        try {
-          const encryptedDelta = encrypt(compressedDelta, secretKey);
-          const encryptedBuffer = Buffer.from(JSON.stringify(encryptedDelta), "utf8");
-          const brotliOptions2 = {
-            params: {
-              [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
-              [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
-              [zlib.constants.BROTLI_PARAM_SIZE_HINT]: encryptedBuffer.length
-            }
-          };
-
-          zlib.brotliCompress(encryptedBuffer, brotliOptions2, (err, finalDelta) => {
-            if (err) {
-              app.error(`Brotli compression error (stage 2): ${err.message}`);
-              metrics.compressionErrors++;
-              metrics.lastError = `Brotli compression error (stage 2): ${err.message}`;
-              metrics.lastErrorTime = Date.now();
-              return;
-            }
-            if (finalDelta) {
-              let packetToSend = finalDelta;
-
-              // Add HMAC if enabled (prepend 32-byte signature)
-              if (pluginOptions.useHmac) {
-                const hmac = createHmac(finalDelta, secretKey);
-                packetToSend = Buffer.concat([hmac, finalDelta]);
-              }
-
-              // Track bandwidth
-              metrics.bandwidth.bytesOut += packetToSend.length;
-              metrics.bandwidth.packetsOut++;
-
-              udpSend(packetToSend, udpAddress, udpPort);
-              metrics.deltasSent++;
-            }
-          });
-        } catch (encryptError) {
-          app.error(`Encryption error: ${encryptError.message}`);
-          metrics.encryptionErrors++;
-          metrics.lastError = `Encryption error: ${encryptError.message}`;
-          metrics.lastErrorTime = Date.now();
+          [zlib.constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY_HIGH,
+          [zlib.constants.BROTLI_PARAM_SIZE_HINT]: serialized.length
         }
       });
+
+      // Encrypt with AES-256-GCM (binary format with built-in authentication)
+      // Format: [IV (12 bytes)][Encrypted Data][Auth Tag (16 bytes)]
+      const packet = encryptBinary(compressed, secretKey);
+
+      // Check for MTU issues
+      if (packet.length > MAX_SAFE_UDP_PAYLOAD) {
+        app.warn(
+          `Packet size ${packet.length} bytes exceeds safe MTU (${MAX_SAFE_UDP_PAYLOAD}), may fragment. ` +
+          `Consider reducing delta timer interval or filtering paths.`
+        );
+      }
+
+      // Track bandwidth
+      metrics.bandwidth.bytesOut += packet.length;
+      metrics.bandwidth.packetsOut++;
+
+      // Send packet
+      await udpSendAsync(packet, udpAddress, udpPort);
+      metrics.deltasSent++;
+
+      // Update last packet time for hello message suppression
+      lastPacketTime = Date.now();
+
     } catch (error) {
-      app.error(`packCrypt error: ${error.message}`);
+      if (error.message && error.message.includes("compress")) {
+        app.error(`Compression error: ${error.message}`);
+        metrics.compressionErrors++;
+        metrics.lastError = `Compression error: ${error.message}`;
+      } else if (error.message && error.message.includes("encrypt")) {
+        app.error(`Encryption error: ${error.message}`);
+        metrics.encryptionErrors++;
+        metrics.lastError = `Encryption error: ${error.message}`;
+      } else {
+        app.error(`packCrypt error: ${error.message}`);
+        metrics.lastError = `packCrypt error: ${error.message}`;
+      }
+      metrics.lastErrorTime = Date.now();
     }
   }
 
   /**
-   * Decompresses, decrypts, and processes received UDP data
-   * @param {Buffer} delta - Encrypted and compressed delta data
+   * Decompresses, decrypts, and processes received UDP data (optimized binary protocol)
+   * Pipeline: Receive -> Decrypt (with GCM auth) -> Decompress -> Parse -> Process
+   * @param {Buffer} packet - Binary packet with encrypted data
    * @param {string} secretKey - 32-character decryption key
-   * @returns {void}
+   * @returns {Promise<void>}
    */
-  function unpackDecrypt(delta, secretKey) {
-    // Track incoming bandwidth
-    metrics.bandwidth.bytesIn += delta.length;
-    metrics.bandwidth.packetsIn++;
+  async function unpackDecrypt(packet, secretKey) {
+    try {
+      // Track incoming bandwidth
+      metrics.bandwidth.bytesIn += packet.length;
+      metrics.bandwidth.packetsIn++;
 
-    let dataToProcess = delta;
+      // Decrypt with AES-256-GCM (authentication is verified automatically)
+      // If authentication fails, decryptBinary will throw
+      // Format: [IV (12 bytes)][Encrypted Data][Auth Tag (16 bytes)]
+      const decrypted = decryptBinary(packet, secretKey);
 
-    // Verify HMAC if enabled (first 32 bytes are signature)
-    if (pluginOptions.useHmac) {
-      if (delta.length <= HMAC_SIZE) {
-        app.error("HMAC verification failed: packet too small");
-        metrics.encryptionErrors++;
-        metrics.lastError = "HMAC verification failed: packet too small";
-        metrics.lastErrorTime = Date.now();
-        return;
+      // Decompress (single decompression stage)
+      const decompressed = await brotliDecompressAsync(decrypted);
+
+      // Track raw bytes
+      metrics.bandwidth.bytesInRaw += decompressed.length;
+
+      // Parse content (JSON or MessagePack)
+      let jsonContent;
+      if (pluginOptions.useMsgpack) {
+        try {
+          jsonContent = msgpack.decode(decompressed);
+        } catch (msgpackErr) {
+          // Fallback to JSON if MessagePack fails
+          jsonContent = JSON.parse(decompressed.toString());
+        }
+      } else {
+        jsonContent = JSON.parse(decompressed.toString());
       }
 
-      const receivedHmac = delta.slice(0, HMAC_SIZE);
-      dataToProcess = delta.slice(HMAC_SIZE);
+      // Process deltas
+      const deltaCount = Object.keys(jsonContent).length;
 
-      if (!verifyHmac(dataToProcess, receivedHmac, secretKey)) {
-        app.error("HMAC verification failed: invalid signature (tampered or wrong key)");
-        metrics.encryptionErrors++;
-        metrics.lastError = "HMAC verification failed: invalid signature";
-        metrics.lastErrorTime = Date.now();
-        return;
+      for (let i = 0; i < deltaCount; i++) {
+        const jsonKey = Object.keys(jsonContent)[i];
+        let deltaMessage = jsonContent[jsonKey];
+
+        // Decode path dictionary if enabled
+        if (pluginOptions.usePathDictionary) {
+          deltaMessage = decodeDelta(deltaMessage);
+        }
+
+        // Track path stats for server-side analytics (reuse size)
+        trackPathStats(deltaMessage, decompressed.length / deltaCount);
+
+        app.handleMessage("", deltaMessage);
+        app.debug(JSON.stringify(deltaMessage, null, 2));
+        metrics.deltasReceived++;
       }
+
+    } catch (error) {
+      if (error.message && (error.message.includes("Unsupported state") || error.message.includes("auth"))) {
+        app.error(`Authentication failed: packet tampered or wrong key`);
+        metrics.encryptionErrors++;
+        metrics.lastError = "Authentication failed: packet tampered or wrong key";
+      } else if (error.message && error.message.includes("decrypt")) {
+        app.error(`Decryption error: ${error.message}`);
+        metrics.encryptionErrors++;
+        metrics.lastError = `Decryption error: ${error.message}`;
+      } else if (error.message && error.message.includes("decompress")) {
+        app.error(`Decompression error: ${error.message}`);
+        metrics.compressionErrors++;
+        metrics.lastError = `Decompression error: ${error.message}`;
+      } else {
+        app.error(`unpackDecrypt error: ${error.message}`);
+        metrics.lastError = `unpackDecrypt error: ${error.message}`;
+      }
+      metrics.lastErrorTime = Date.now();
+    }
+  }
+
+  /**
+   * Sends a message via UDP with retry logic (async version)
+   * @param {Buffer} message - Message to send
+   * @param {string} host - Destination host address
+   * @param {number} port - Destination port number
+   * @param {number} retryCount - Number of retries (default 0)
+   * @returns {Promise<void>}
+   */
+  async function udpSendAsync(message, host, port, retryCount = 0) {
+    if (!socketUdp) {
+      const error = new Error("UDP socket not initialized, cannot send message");
+      app.error(error.message);
+      setStatus("UDP socket not initialized - cannot send data");
+      throw error;
     }
 
-    zlib.brotliDecompress(dataToProcess, (err, decompressedDelta) => {
-      if (err) {
-        app.error(`Brotli decompression error (stage 1): ${err.message}`);
-        return;
-      }
-      try {
-        const encryptedData = JSON.parse(decompressedDelta.toString("utf8"));
-        const decryptedData = decrypt(encryptedData, secretKey);
-
-        zlib.brotliDecompress(decryptedData, (err, finalDelta) => {
-          if (err) {
-            app.error(`Brotli decompression error (stage 2): ${err.message}`);
-            return;
-          }
-          try {
-            // Parse content (JSON or MessagePack)
-            let jsonContent;
-            if (pluginOptions.useMsgpack) {
-              try {
-                jsonContent = msgpack.decode(finalDelta);
-              } catch (msgpackErr) {
-                // Fallback to JSON if MessagePack fails
-                jsonContent = JSON.parse(finalDelta.toString());
-              }
-            } else {
-              jsonContent = JSON.parse(finalDelta.toString());
+    return new Promise((resolve, reject) => {
+      socketUdp.send(message, port, host, async (error) => {
+        if (error) {
+          metrics.udpSendErrors++;
+          // Check if we should retry
+          if (retryCount < UDP_RETRY_MAX && (error.code === "EAGAIN" || error.code === "ENOBUFS")) {
+            app.debug(`UDP send error (${error.code}), retry ${retryCount + 1}/${UDP_RETRY_MAX}`);
+            metrics.udpRetries++;
+            // Wait with exponential backoff, then retry
+            await new Promise((res) => setTimeout(res, UDP_RETRY_DELAY * (retryCount + 1)));
+            try {
+              await udpSendAsync(message, host, port, retryCount + 1);
+              resolve();
+            } catch (retryError) {
+              reject(retryError);
             }
-
-            // Track raw bytes
-            metrics.bandwidth.bytesInRaw += finalDelta.length;
-
-            const deltaCount = Object.keys(jsonContent).length;
-
-            for (let i = 0; i < deltaCount; i++) {
-              const jsonKey = Object.keys(jsonContent)[i];
-              let deltaMessage = jsonContent[jsonKey];
-
-              // Decode path dictionary if enabled
-              if (pluginOptions.usePathDictionary) {
-                deltaMessage = decodeDelta(deltaMessage);
-              }
-
-              // Track path stats for server-side analytics
-              trackPathStats(deltaMessage);
-
-              app.handleMessage("", deltaMessage);
-              app.debug(JSON.stringify(deltaMessage, null, 2));
-              metrics.deltasReceived++;
-            }
-          } catch (parseError) {
-            app.error(`Parse error: ${parseError.message}`);
-            metrics.lastError = `Parse error: ${parseError.message}`;
+          } else {
+            // Log error and give up
+            app.error(`UDP send error to ${host}:${port} - ${error.message} (code: ${error.code})`);
+            metrics.lastError = `UDP send error: ${error.message} (${error.code})`;
             metrics.lastErrorTime = Date.now();
+            if (retryCount >= UDP_RETRY_MAX) {
+              app.error("Max retries reached, packet dropped");
+            }
+            reject(error);
           }
-        });
-      } catch (decryptError) {
-        app.error(`Decryption error: ${decryptError.message}`);
-      }
+        } else {
+          resolve();
+        }
+      });
     });
   }
 
   /**
-   * Sends a message via UDP with retry logic
+   * Legacy: Sends a message via UDP with retry logic (callback version)
+   * @deprecated Use udpSendAsync instead
    * @param {Buffer} message - Message to send
    * @param {string} host - Destination host address
    * @param {number} port - Destination port number
    * @param {number} retryCount - Number of retries (default 0)
    */
   function udpSend(message, host, port, retryCount = 0) {
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY = 100; // milliseconds
-
     if (!socketUdp) {
       app.error("UDP socket not initialized, cannot send message");
       setStatus("UDP socket not initialized - cannot send data");
@@ -1213,21 +1322,21 @@ module.exports = function createPlugin(app) {
       if (error) {
         metrics.udpSendErrors++;
         // Check if we should retry
-        if (retryCount < MAX_RETRIES && (error.code === "EAGAIN" || error.code === "ENOBUFS")) {
-          app.debug(`UDP send error (${error.code}), retry ${retryCount + 1}/${MAX_RETRIES}`);
+        if (retryCount < UDP_RETRY_MAX && (error.code === "EAGAIN" || error.code === "ENOBUFS")) {
+          app.debug(`UDP send error (${error.code}), retry ${retryCount + 1}/${UDP_RETRY_MAX}`);
           metrics.udpRetries++;
           setTimeout(
             () => {
               udpSend(message, host, port, retryCount + 1);
             },
-            RETRY_DELAY * (retryCount + 1)
+            UDP_RETRY_DELAY * (retryCount + 1)
           ); // Exponential backoff
         } else {
           // Log error and give up
           app.error(`UDP send error to ${host}:${port} - ${error.message} (code: ${error.code})`);
           metrics.lastError = `UDP send error: ${error.message} (${error.code})`;
           metrics.lastErrorTime = Date.now();
-          if (retryCount >= MAX_RETRIES) {
+          if (retryCount >= UDP_RETRY_MAX) {
             app.error("Max retries reached, packet dropped");
           }
         }
@@ -1250,6 +1359,8 @@ module.exports = function createPlugin(app) {
     lastSubscriptionHash = null;
     lastSentenceFilterHash = null;
     excludedSentences = ["GSV"];
+    lastPacketTime = 0;
+    currentBatchSize = 0;
 
     // Reset metrics for fresh start
     metrics.startTime = Date.now();
@@ -1274,7 +1385,7 @@ module.exports = function createPlugin(app) {
     metrics.bandwidth.rateOut = 0;
     metrics.bandwidth.rateIn = 0;
     metrics.bandwidth.compressionRatio = 0;
-    metrics.bandwidth.history = [];
+    metrics.bandwidth.history = new CircularBuffer(BANDWIDTH_HISTORY_MAX);
     metrics.pathStats.clear();
 
     // Clear rate limit map
