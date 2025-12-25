@@ -467,8 +467,10 @@ class DataConnectorConfig {
     const bw = metrics.bandwidth;
     const isClient = metrics.mode === "client";
 
-    // Calculate savings
-    const savedBytes = bw.bytesOutRaw - bw.bytesOut;
+    // Calculate savings (client uses bytesOut, server uses bytesIn)
+    const savedBytes = isClient
+      ? bw.bytesOutRaw - bw.bytesOut
+      : bw.bytesInRaw - bw.bytesIn;
     const savedFormatted = this.formatBytes(savedBytes > 0 ? savedBytes : 0);
 
     const bandwidthHtml = `
@@ -515,6 +517,14 @@ class DataConnectorConfig {
             <div class="bw-stat">
               <span class="bw-label">Total Received (Compressed):</span>
               <span class="bw-value">${bw.bytesInFormatted}</span>
+            </div>
+            <div class="bw-stat">
+              <span class="bw-label">Total Raw (After Decompression):</span>
+              <span class="bw-value">${this.formatBytes(bw.bytesInRaw || 0)}</span>
+            </div>
+            <div class="bw-stat highlight">
+              <span class="bw-label">Bandwidth Saved:</span>
+              <span class="bw-value success-text">${savedFormatted}</span>
             </div>
             <div class="bw-stat">
               <span class="bw-label">Packets Received:</span>
