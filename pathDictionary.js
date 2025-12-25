@@ -405,7 +405,9 @@ function encodeDelta(delta) {
   return {
     context: delta.context,
     updates: delta.updates.map((update) => ({
-      source: update.source,
+      // Ensure source is always an object (never null/undefined) to prevent
+      // "Cannot set properties of null (setting 'label')" errors in SignalK
+      source: update.source ?? {},
       timestamp: update.timestamp,
       $source: update.$source,
       values: update.values
@@ -431,7 +433,9 @@ function decodeDelta(delta) {
   return {
     context: delta.context,
     updates: delta.updates.map((update) => ({
-      source: update.source,
+      // Ensure source is always an object (never null/undefined) to prevent
+      // "Cannot set properties of null (setting 'label')" errors in SignalK
+      source: update.source ?? {},
       timestamp: update.timestamp,
       $source: update.$source,
       values: update.values

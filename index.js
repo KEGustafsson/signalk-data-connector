@@ -1238,6 +1238,15 @@ module.exports = function createPlugin(app) {
         // Decode path dictionary if enabled
         if (pluginOptions.usePathDictionary) {
           deltaMessage = decodeDelta(deltaMessage);
+        } else {
+          // Ensure source is never null/undefined even when path dictionary is disabled
+          // This prevents "Cannot set properties of null (setting 'label')" errors in SignalK
+          if (deltaMessage.updates) {
+            deltaMessage.updates = deltaMessage.updates.map((update) => ({
+              ...update,
+              source: update.source ?? {}
+            }));
+          }
         }
 
         // Skip if decoding returned null
