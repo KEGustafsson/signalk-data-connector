@@ -1,6 +1,6 @@
 /* eslint-disable no-undef */
 const zlib = require("zlib");
-const { encrypt, decrypt } = require("../crypto");
+const { encryptBinary, decryptBinary } = require("../crypto");
 
 describe("Compression and Encryption Pipeline", () => {
   const validSecretKey = "12345678901234567890123456789012";
@@ -92,12 +92,11 @@ describe("Compression and Encryption Pipeline", () => {
       const buffer = Buffer.from(originalData, "utf8");
 
       // Encrypt
-      const encrypted = encrypt(buffer, validSecretKey);
-      expect(encrypted).toHaveProperty("iv");
-      expect(encrypted).toHaveProperty("content");
+      const encrypted = encryptBinary(buffer, validSecretKey);
+      expect(Buffer.isBuffer(encrypted)).toBe(true);
 
       // Decrypt
-      const decrypted = decrypt(encrypted, validSecretKey);
+      const decrypted = decryptBinary(encrypted, validSecretKey);
       expect(decrypted.toString()).toBe(originalData);
     });
 
@@ -147,18 +146,18 @@ describe("Compression and Encryption Pipeline", () => {
       zlib.brotliCompress(testData, (err, compressed) => {
         expect(err).toBeNull();
 
-        const encrypted = encrypt(compressed, validSecretKey);
+        const encrypted = encryptBinary(compressed, validSecretKey);
         const wrongKey = "wrongkey12345678901234567890123";
 
-        expect(() => decrypt(encrypted, wrongKey)).toThrow();
+        expect(() => decryptBinary(encrypted, wrongKey)).toThrow();
         done();
       });
     });
 
     test("should handle corrupted encrypted data", () => {
-      const corruptedData = { iv: "invalid", content: "corrupted" };
+      const corruptedData = Buffer.alloc(100); // Invalid binary packet
 
-      expect(() => decrypt(corruptedData, validSecretKey)).toThrow();
+      expect(() => decryptBinary(corruptedData, validSecretKey)).toThrow();
     });
   });
 

@@ -1,16 +1,17 @@
 /* eslint-disable no-undef */
 const zlib = require("zlib");
-const { encrypt, decrypt } = require("../crypto");
+const { encryptBinary, decryptBinary } = require("../crypto");
 
 describe("Full Encryption/Decryption Pipeline", () => {
   const validSecretKey = "12345678901234567890123456789012";
 
   /**
-   * Simulates the packCrypt function from index.js
-   * Compress -> Encrypt -> Compress
+   * Simulates the new packCrypt function from index.js
+   * Serialize -> Compress -> Encrypt (single compression, binary format)
    */
   function packCrypt(delta, secretKey, callback) {
     try {
+      // Serialize
       const deltaBuffer = Buffer.from(JSON.stringify(delta), "utf8");
       const brotliOptions = {
         params: {
@@ -21,29 +22,14 @@ describe("Full Encryption/Decryption Pipeline", () => {
       };
 
       // Stage 1: Compress
-      zlib.brotliCompress(deltaBuffer, brotliOptions, (err, compressedDelta) => {
+      zlib.brotliCompress(deltaBuffer, brotliOptions, (err, compressed) => {
         if (err) {
           return callback(err);
         }
         try {
-          // Stage 2: Encrypt
-          const encryptedDelta = encrypt(compressedDelta, secretKey);
-          const encryptedBuffer = Buffer.from(JSON.stringify(encryptedDelta), "utf8");
-          const brotliOptions2 = {
-            params: {
-              [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_GENERIC,
-              [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
-              [zlib.constants.BROTLI_PARAM_SIZE_HINT]: encryptedBuffer.length
-            }
-          };
-
-          // Stage 3: Compress again
-          zlib.brotliCompress(encryptedBuffer, brotliOptions2, (err, finalDelta) => {
-            if (err) {
-              return callback(err);
-            }
-            callback(null, finalDelta);
-          });
+          // Stage 2: Encrypt (binary format)
+          const packet = encryptBinary(compressed, secretKey);
+          callback(null, packet);
         } catch (encryptError) {
           callback(encryptError);
         }
@@ -54,36 +40,30 @@ describe("Full Encryption/Decryption Pipeline", () => {
   }
 
   /**
-   * Simulates the unpackDecrypt function from index.js
-   * Decompress -> Decrypt -> Decompress
+   * Simulates the new unpackDecrypt function from index.js
+   * Decrypt -> Decompress -> Parse (single decompression, binary format)
    */
-  function unpackDecrypt(delta, secretKey, callback) {
-    // Stage 1: Decompress
-    zlib.brotliDecompress(delta, (err, decompressedDelta) => {
-      if (err) {
-        return callback(err);
-      }
-      try {
-        // Stage 2: Decrypt
-        const encryptedData = JSON.parse(decompressedDelta.toString("utf8"));
-        const decryptedData = decrypt(encryptedData, secretKey);
+  function unpackDecrypt(packet, secretKey, callback) {
+    try {
+      // Stage 1: Decrypt (binary format)
+      const decrypted = decryptBinary(packet, secretKey);
 
-        // Stage 3: Decompress again (THIS IS THE FIXED LINE)
-        zlib.brotliDecompress(Buffer.from(decryptedData, "utf8"), (err, finalDelta) => {
-          if (err) {
-            return callback(err);
-          }
-          try {
-            const jsonContent = JSON.parse(finalDelta.toString());
-            callback(null, jsonContent);
-          } catch (parseError) {
-            callback(parseError);
-          }
-        });
-      } catch (decryptError) {
-        callback(decryptError);
-      }
-    });
+      // Stage 2: Decompress
+      zlib.brotliDecompress(decrypted, (err, decompressed) => {
+        if (err) {
+          return callback(err);
+        }
+        try {
+          // Stage 3: Parse JSON
+          const jsonContent = JSON.parse(decompressed.toString());
+          callback(null, jsonContent);
+        } catch (parseError) {
+          callback(parseError);
+        }
+      });
+    } catch (decryptError) {
+      callback(decryptError);
+    }
   }
 
   describe("End-to-End Pipeline Tests", () => {

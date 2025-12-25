@@ -124,7 +124,7 @@ describe("Path Dictionary", () => {
     });
 
     test("should return original for unknown numeric IDs", () => {
-      expect(decodePath(0xFFFF)).toBe(0xFFFF);
+      expect(decodePath(0xffff)).toBe(0xffff);
     });
 
     test("should handle string numbers", () => {

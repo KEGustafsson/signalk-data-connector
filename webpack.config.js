@@ -48,10 +48,10 @@ module.exports = (env, argv) => {
       }),
       ...(isProduction
         ? [
-          new MiniCssExtractPlugin({
-            filename: "[name].[contenthash].css"
-          })
-        ]
+            new MiniCssExtractPlugin({
+              filename: "[name].[contenthash].css"
+            })
+          ]
         : [])
     ],
     devtool: isProduction ? "source-map" : "eval-source-map",
