@@ -1100,6 +1100,12 @@ module.exports = function createPlugin(app) {
    */
   async function packCrypt(delta, secretKey, udpAddress, udpPort) {
     try {
+      // Guard against calls after plugin stop
+      if (!pluginOptions) {
+        app.debug("packCrypt called but plugin is stopped, ignoring");
+        return;
+      }
+
       // Apply path dictionary encoding if enabled
       let processedDelta = delta;
       if (pluginOptions.usePathDictionary) {
@@ -1182,6 +1188,12 @@ module.exports = function createPlugin(app) {
    */
   async function unpackDecrypt(packet, secretKey) {
     try {
+      // Guard against calls after plugin stop
+      if (!pluginOptions) {
+        app.debug("unpackDecrypt called but plugin is stopped, ignoring");
+        return;
+      }
+
       // Track incoming bandwidth
       metrics.bandwidth.bytesIn += packet.length;
       metrics.bandwidth.packetsIn++;
