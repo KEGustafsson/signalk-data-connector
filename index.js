@@ -13,13 +13,7 @@ const {
   decryptBinary,
   validateSecretKey,
   IV_LENGTH,
-  AUTH_TAG_LENGTH,
-  // Legacy support
-  encrypt,
-  decrypt,
-  createHmac,
-  verifyHmac,
-  HMAC_SIZE
+  AUTH_TAG_LENGTH
 } = require("./crypto");
 const { encodeDelta, decodeDelta, getAllPaths, PATH_CATEGORIES } = require("./pathDictionary");
 const Monitor = require("ping-monitor");
@@ -1300,47 +1294,6 @@ module.exports = function createPlugin(app) {
           resolve();
         }
       });
-    });
-  }
-
-  /**
-   * Legacy: Sends a message via UDP with retry logic (callback version)
-   * @deprecated Use udpSendAsync instead
-   * @param {Buffer} message - Message to send
-   * @param {string} host - Destination host address
-   * @param {number} port - Destination port number
-   * @param {number} retryCount - Number of retries (default 0)
-   */
-  function udpSend(message, host, port, retryCount = 0) {
-    if (!socketUdp) {
-      app.error("UDP socket not initialized, cannot send message");
-      setStatus("UDP socket not initialized - cannot send data");
-      return;
-    }
-
-    socketUdp.send(message, port, host, (error) => {
-      if (error) {
-        metrics.udpSendErrors++;
-        // Check if we should retry
-        if (retryCount < UDP_RETRY_MAX && (error.code === "EAGAIN" || error.code === "ENOBUFS")) {
-          app.debug(`UDP send error (${error.code}), retry ${retryCount + 1}/${UDP_RETRY_MAX}`);
-          metrics.udpRetries++;
-          setTimeout(
-            () => {
-              udpSend(message, host, port, retryCount + 1);
-            },
-            UDP_RETRY_DELAY * (retryCount + 1)
-          ); // Exponential backoff
-        } else {
-          // Log error and give up
-          app.error(`UDP send error to ${host}:${port} - ${error.message} (code: ${error.code})`);
-          metrics.lastError = `UDP send error: ${error.message} (${error.code})`;
-          metrics.lastErrorTime = Date.now();
-          if (retryCount >= UDP_RETRY_MAX) {
-            app.error("Max retries reached, packet dropped");
-          }
-        }
-      }
     });
   }
 
