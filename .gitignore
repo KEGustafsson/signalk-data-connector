@@ -12,6 +12,7 @@ npm-debug.log*
 .vscode/
 .idea/
 .claude/
+package-lock.json
 
 # Temporary files
 *.tmp
