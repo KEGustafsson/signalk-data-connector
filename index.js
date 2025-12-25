@@ -8,13 +8,7 @@ const zlib = require("node:zlib");
 const dgram = require("dgram");
 const crypto = require("crypto");
 const msgpack = require("@msgpack/msgpack");
-const {
-  encryptBinary,
-  decryptBinary,
-  validateSecretKey,
-  IV_LENGTH,
-  AUTH_TAG_LENGTH
-} = require("./crypto");
+const { encryptBinary, decryptBinary, validateSecretKey } = require("./crypto");
 const { encodeDelta, decodeDelta, getAllPaths, PATH_CATEGORIES } = require("./pathDictionary");
 const Monitor = require("ping-monitor");
 
@@ -36,11 +30,15 @@ class CircularBuffer {
   push(item) {
     this.buffer[this.index] = item;
     this.index = (this.index + 1) % this.size;
-    if (this.index === 0) {this.filled = true;}
+    if (this.index === 0) {
+      this.filled = true;
+    }
   }
 
   toArray() {
-    if (!this.filled) {return this.buffer.slice(0, this.index);}
+    if (!this.filled) {
+      return this.buffer.slice(0, this.index);
+    }
     return [...this.buffer.slice(this.index), ...this.buffer.slice(0, this.index)];
   }
 
@@ -81,7 +79,6 @@ module.exports = function createPlugin(app) {
   let timer = false;
   let pluginOptions; // Store options for access in event handlers
   let lastPacketTime = 0; // Track last packet send time for hello message suppression
-  let currentBatchSize = 0; // Track current batch size for MTU optimization
 
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
@@ -332,13 +329,16 @@ module.exports = function createPlugin(app) {
         const localSubscriptionNew = content
           ? JSON.parse(content)
           : {
-            context: "*",
-            subscribe: [{ path: "*" }]
-          };
+              context: "*",
+              subscribe: [{ path: "*" }]
+            };
 
         // Use content hashing instead of JSON.stringify comparison
         const configString = JSON.stringify(localSubscriptionNew);
-        const contentHash = crypto.createHash(CONTENT_HASH_ALGORITHM).update(configString).digest("hex");
+        const contentHash = crypto
+          .createHash(CONTENT_HASH_ALGORITHM)
+          .update(configString)
+          .digest("hex");
 
         // Skip if content hasn't actually changed
         if (contentHash === lastSubscriptionHash) {
@@ -612,7 +612,9 @@ module.exports = function createPlugin(app) {
    * @param {number} deltaSize - Precomputed delta size (optional, for performance)
    */
   function trackPathStats(delta, deltaSize = null) {
-    if (!delta || !delta.updates) {return;}
+    if (!delta || !delta.updates) {
+      return;
+    }
 
     // Use provided size or calculate if not provided (but avoid in hot path)
     const size = deltaSize !== null ? deltaSize : JSON.stringify(delta).length;
@@ -639,7 +641,9 @@ module.exports = function createPlugin(app) {
    * @returns {string} Formatted string
    */
   function formatBytes(bytes) {
-    if (bytes === 0) {return "0 B";}
+    if (bytes === 0) {
+      return "0 B";
+    }
     const k = 1024;
     const sizes = ["B", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -754,29 +758,29 @@ module.exports = function createPlugin(app) {
           rateInFormatted: formatBytes(metrics.bandwidth.rateIn) + "/s",
           compressionRatio: metrics.bandwidth.compressionRatio,
           avgPacketSize: isServerMode
-            ? (metrics.bandwidth.packetsIn > 0
+            ? metrics.bandwidth.packetsIn > 0
               ? Math.round(metrics.bandwidth.bytesIn / metrics.bandwidth.packetsIn)
-              : 0)
-            : (metrics.bandwidth.packetsOut > 0
+              : 0
+            : metrics.bandwidth.packetsOut > 0
               ? Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut)
-              : 0),
+              : 0,
           avgPacketSizeFormatted: isServerMode
-            ? (metrics.bandwidth.packetsIn > 0
+            ? metrics.bandwidth.packetsIn > 0
               ? formatBytes(Math.round(metrics.bandwidth.bytesIn / metrics.bandwidth.packetsIn))
-              : "0 B")
-            : (metrics.bandwidth.packetsOut > 0
+              : "0 B"
+            : metrics.bandwidth.packetsOut > 0
               ? formatBytes(Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut))
-              : "0 B"),
+              : "0 B",
           history: metrics.bandwidth.history.toArray().slice(-30) // Last 30 data points for chart
         },
         pathStats: pathStatsArray,
         pathCategories: PATH_CATEGORIES,
         lastError: metrics.lastError
           ? {
-            message: metrics.lastError,
-            timestamp: metrics.lastErrorTime,
-            timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
-          }
+              message: metrics.lastError,
+              timestamp: metrics.lastErrorTime,
+              timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
+            }
           : null
       };
 
@@ -1138,7 +1142,7 @@ module.exports = function createPlugin(app) {
       if (packet.length > MAX_SAFE_UDP_PAYLOAD) {
         app.warn(
           `Packet size ${packet.length} bytes exceeds safe MTU (${MAX_SAFE_UDP_PAYLOAD}), may fragment. ` +
-          `Consider reducing delta timer interval or filtering paths.`
+            "Consider reducing delta timer interval or filtering paths."
         );
       }
 
@@ -1152,7 +1156,6 @@ module.exports = function createPlugin(app) {
 
       // Update last packet time for hello message suppression
       lastPacketTime = Date.now();
-
     } catch (error) {
       if (error.message && error.message.includes("compress")) {
         app.error(`Compression error: ${error.message}`);
@@ -1226,10 +1229,12 @@ module.exports = function createPlugin(app) {
         app.debug(JSON.stringify(deltaMessage, null, 2));
         metrics.deltasReceived++;
       }
-
     } catch (error) {
-      if (error.message && (error.message.includes("Unsupported state") || error.message.includes("auth"))) {
-        app.error(`Authentication failed: packet tampered or wrong key`);
+      if (
+        error.message &&
+        (error.message.includes("Unsupported state") || error.message.includes("auth"))
+      ) {
+        app.error("Authentication failed: packet tampered or wrong key");
         metrics.encryptionErrors++;
         metrics.lastError = "Authentication failed: packet tampered or wrong key";
       } else if (error.message && error.message.includes("decrypt")) {
@@ -1256,7 +1261,7 @@ module.exports = function createPlugin(app) {
    * @param {number} retryCount - Number of retries (default 0)
    * @returns {Promise<void>}
    */
-  async function udpSendAsync(message, host, port, retryCount = 0) {
+  function udpSendAsync(message, host, port, retryCount = 0) {
     if (!socketUdp) {
       const error = new Error("UDP socket not initialized, cannot send message");
       app.error(error.message);
@@ -1313,7 +1318,6 @@ module.exports = function createPlugin(app) {
     lastSentenceFilterHash = null;
     excludedSentences = ["GSV"];
     lastPacketTime = 0;
-    currentBatchSize = 0;
 
     // Reset metrics for fresh start
     metrics.startTime = Date.now();

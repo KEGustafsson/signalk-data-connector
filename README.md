@@ -35,6 +35,7 @@ A SignalK plugin for secure, encrypted UDP data transmission with advanced bandw
 - ✅ **Efficient memory**: Circular buffers for O(1) operations
 
 **Test Results:**
+
 ```
 Original: 19,293 bytes → Encrypted+Compressed: 622 bytes
 Bandwidth Reduction: 96.78%
@@ -55,6 +56,7 @@ UDP → AES-256-GCM → Brotli → [MessagePack] → [Path Decode] → SignalK
 ```
 
 **Key Design Principles:**
+
 - Binary format throughout (no JSON serialization overhead)
 - Single compression stage (encrypted data is incompressible)
 - Authenticated encryption (GCM provides encryption + integrity in one operation)
@@ -100,6 +102,7 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
 Access via: `http://[signalk-server]:3000/plugins/signalk-data-connector`
 
 **Client Mode Features:**
+
 - Delta Timer configuration (100-10000ms)
 - Subscription path management (JSON editor + form)
 - Sentence filter (comma-separated: `GSV, GSA, VTG`)
@@ -110,6 +113,7 @@ Access via: `http://[signalk-server]:3000/plugins/signalk-data-connector`
 - Rate history chart (last 150 seconds)
 
 **Server Mode Features:**
+
 - Bandwidth monitor (download rate, packets received)
 - **Bandwidth saved display** (shows bytes saved on receiving compressed data)
 - Path analytics (incoming data breakdown)
@@ -118,11 +122,11 @@ Access via: `http://[signalk-server]:3000/plugins/signalk-data-connector`
 
 ### Configuration Files
 
-| File | Purpose |
-|------|---------|
-| `delta_timer.json` | Collection interval (ms) |
-| `subscription.json` | SignalK paths to subscribe |
-| `sentence_filter.json` | NMEA sentences to exclude |
+| File                   | Purpose                    |
+| ---------------------- | -------------------------- |
+| `delta_timer.json`     | Collection interval (ms)   |
+| `subscription.json`    | SignalK paths to subscribe |
+| `sentence_filter.json` | NMEA sentences to exclude  |
 
 ### API Endpoints
 
@@ -199,6 +203,7 @@ openssl rand -base64 32 | cut -c1-32
 ```
 
 **Examples of valid keys:**
+
 ```
 # Strong (recommended):
 Abc123!@#XYZ456$%^uvw789&*()pqr0
@@ -209,6 +214,7 @@ abcdefgh12345678901234567890abcd
 ```
 
 **Invalid keys:**
+
 ```
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  # All same character (rejected)
 abababababababababababababababab  # Insufficient diversity (rejected)
@@ -244,6 +250,7 @@ MySecretKey123                     # Too short (rejected)
 ### No Data Transmission
 
 **Client Mode:**
+
 1. Confirm matching encryption keys on client and server
 2. Verify UDP port and address configuration
 3. Check firewall allows UDP traffic on configured port
@@ -252,12 +259,14 @@ MySecretKey123                     # Too short (rejected)
 6. Enable debug logging to see packet transmission
 
 **Server Mode:**
+
 1. Verify UDP port is accessible (not blocked by firewall)
 2. Confirm encryption key matches client
 3. Check SignalK logs for decryption errors
 4. Verify client is actually sending data (check client metrics)
 
 **Common Error Messages:**
+
 - `"Unsupported state or unable to authenticate data"` → Mismatched encryption keys
 - `"Invalid packet size"` → Corrupted data or network issues
 - `"Secret key must be exactly 32 characters"` → Invalid key length
@@ -293,6 +302,7 @@ Enable in SignalK plugin settings to see:
 - Metrics updates (bandwidth, rates, path stats)
 
 **Log Level Recommendations:**
+
 - **Production**: Error only
 - **Troubleshooting**: Info (shows key events)
 - **Development**: Debug (shows all details)
@@ -315,6 +325,7 @@ npm run format       # Format code with Prettier
 ### Testing
 
 **Test Suite Coverage:**
+
 - ✅ 125 tests, all passing
 - ✅ Crypto module: 100% coverage (encryption, decryption, validation)
 - ✅ Path dictionary: 100% coverage (encoding, decoding)
@@ -323,6 +334,7 @@ npm run format       # Format code with Prettier
 - ✅ Web UI: Metrics and API endpoints
 
 **Run specific test suites:**
+
 ```bash
 npm test -- crypto.test.js           # Encryption tests only
 npm test -- full-pipeline.test.js    # Integration tests
@@ -364,6 +376,7 @@ signalk-data-connector/
 ### Packet Format
 
 **Binary Packet Structure:**
+
 ```
 [IV (12 bytes)][Encrypted Data][Auth Tag (16 bytes)]
 ```
@@ -438,6 +451,7 @@ UDP receive
 - ✅ Update README if adding features
 
 **Commit Message Format:**
+
 ```
 type: description
 
@@ -454,6 +468,7 @@ Examples:
 ### v1.0.0-beta.33 (Latest)
 
 **Major Performance Improvements:**
+
 - ✅ Migrated to AES-256-GCM (authenticated encryption)
 - ✅ Removed double compression (50-60% bandwidth improvement)
 - ✅ Binary protocol implementation (40% overhead reduction)
@@ -464,11 +479,13 @@ Examples:
 - ✅ All legacy code removed (no backward compatibility)
 
 **Test Coverage:**
+
 - 125 tests passing (all critical paths covered)
 - 96.78% compression ratio on test data
 - Full pipeline integration tests
 
 **Breaking Changes:**
+
 - Removed AES-256-CTR encryption (replaced with GCM)
 - Removed separate HMAC authentication (built-in to GCM)
 - Changed packet format to binary (incompatible with older versions)

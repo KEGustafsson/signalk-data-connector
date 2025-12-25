@@ -59,7 +59,9 @@ class DataConnectorConfig {
       this.subscriptionConfig = await subResponse.json();
 
       // Load sentence filter configuration
-      const filterResponse = await fetch("/plugins/signalk-data-connector/config/sentence_filter.json");
+      const filterResponse = await fetch(
+        "/plugins/signalk-data-connector/config/sentence_filter.json"
+      );
       this.sentenceFilterConfig = await filterResponse.json();
     } catch (error) {
       this.showNotification("Error loading configurations: " + error.message, "error");
@@ -363,43 +365,43 @@ class DataConnectorConfig {
           <div class="metric-value">${metrics.status.readyToSend ? "✓ Ready" : "✗ Not Ready"}</div>
         </div>
         ${
-  metrics.mode === "client"
-    ? `
+          metrics.mode === "client"
+            ? `
         <div class="metric-item">
           <div class="metric-label">Buffered Deltas</div>
           <div class="metric-value">${metrics.status.deltasBuffered}</div>
         </div>
         `
-    : ""
-}
+            : ""
+        }
       </div>
 
       <div class="metrics-stats">
         <h5>Transmission Statistics</h5>
         <div class="stats-grid">
           ${
-  metrics.mode === "client"
-    ? `
+            metrics.mode === "client"
+              ? `
           <div class="stat-item">
             <span class="stat-label">Deltas Sent:</span>
             <span class="stat-value">${metrics.stats.deltasSent.toLocaleString()}</span>
           </div>
           `
-    : ""
-}
+              : ""
+          }
           ${
-  metrics.mode === "server"
-    ? `
+            metrics.mode === "server"
+              ? `
           <div class="stat-item">
             <span class="stat-label">Deltas Received:</span>
             <span class="stat-value">${metrics.stats.deltasReceived.toLocaleString()}</span>
           </div>
           `
-    : ""
-}
+              : ""
+          }
           ${
-  metrics.mode === "client"
-    ? `
+            metrics.mode === "client"
+              ? `
           <div class="stat-item ${metrics.stats.udpSendErrors > 0 ? "error" : ""}">
             <span class="stat-label">UDP Send Errors:</span>
             <span class="stat-value">${metrics.stats.udpSendErrors}</span>
@@ -409,8 +411,8 @@ class DataConnectorConfig {
             <span class="stat-value">${metrics.stats.udpRetries}</span>
           </div>
           `
-    : ""
-}
+              : ""
+          }
           <div class="stat-item ${metrics.stats.compressionErrors > 0 ? "error" : ""}">
             <span class="stat-label">Compression Errors:</span>
             <span class="stat-value">${metrics.stats.compressionErrors}</span>
@@ -420,15 +422,15 @@ class DataConnectorConfig {
             <span class="stat-value">${metrics.stats.encryptionErrors}</span>
           </div>
           ${
-  metrics.mode === "client"
-    ? `
+            metrics.mode === "client"
+              ? `
           <div class="stat-item ${metrics.stats.subscriptionErrors > 0 ? "error" : ""}">
             <span class="stat-label">Subscription Errors:</span>
             <span class="stat-value">${metrics.stats.subscriptionErrors}</span>
           </div>
           `
-    : ""
-}
+              : ""
+          }
         </div>
       </div>
     `;
@@ -468,9 +470,7 @@ class DataConnectorConfig {
     const isClient = metrics.mode === "client";
 
     // Calculate savings (client uses bytesOut, server uses bytesIn)
-    const savedBytes = isClient
-      ? bw.bytesOutRaw - bw.bytesOut
-      : bw.bytesInRaw - bw.bytesIn;
+    const savedBytes = isClient ? bw.bytesOutRaw - bw.bytesOut : bw.bytesInRaw - bw.bytesIn;
     const savedFormatted = this.formatBytes(savedBytes > 0 ? savedBytes : 0);
 
     const bandwidthHtml = `
@@ -494,8 +494,8 @@ class DataConnectorConfig {
           <h5>📊 Bandwidth Details</h5>
           <div class="bandwidth-grid">
             ${
-  isClient
-    ? `
+              isClient
+                ? `
             <div class="bw-stat">
               <span class="bw-label">Total Sent (Compressed):</span>
               <span class="bw-value">${bw.bytesOutFormatted}</span>
@@ -513,7 +513,7 @@ class DataConnectorConfig {
               <span class="bw-value">${bw.packetsOut.toLocaleString()}</span>
             </div>
             `
-    : `
+                : `
             <div class="bw-stat">
               <span class="bw-label">Total Received (Compressed):</span>
               <span class="bw-value">${bw.bytesInFormatted}</span>
@@ -531,7 +531,7 @@ class DataConnectorConfig {
               <span class="bw-value">${bw.packetsIn.toLocaleString()}</span>
             </div>
             `
-}
+            }
           </div>
         </div>
 
@@ -679,7 +679,9 @@ class DataConnectorConfig {
   }
 
   formatBytes(bytes) {
-    if (bytes === 0) {return "0 B";}
+    if (bytes === 0) {
+      return "0 B";
+    }
     const k = 1024;
     const sizes = ["B", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));

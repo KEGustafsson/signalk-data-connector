@@ -397,7 +397,9 @@ function decodePath(id) {
  * @returns {Object} Delta with encoded paths
  */
 function encodeDelta(delta) {
-  if (!delta || !delta.updates) {return delta;}
+  if (!delta || !delta.updates) {
+    return delta;
+  }
 
   // Structured clone - only clone what we need to modify
   return {
@@ -408,8 +410,8 @@ function encodeDelta(delta) {
       $source: update.$source,
       values: update.values
         ? update.values.map((value) =>
-          value.path ? { ...value, path: encodePath(value.path) } : { ...value }
-        )
+            value.path ? { ...value, path: encodePath(value.path) } : { ...value }
+          )
         : update.values
     }))
   };
@@ -421,7 +423,9 @@ function encodeDelta(delta) {
  * @returns {Object} Delta with decoded paths
  */
 function decodeDelta(delta) {
-  if (!delta || !delta.updates) {return delta;}
+  if (!delta || !delta.updates) {
+    return delta;
+  }
 
   // Structured clone - only clone what we need to modify
   return {
@@ -432,8 +436,8 @@ function decodeDelta(delta) {
       $source: update.$source,
       values: update.values
         ? update.values.map((value) =>
-          value.path !== undefined ? { ...value, path: decodePath(value.path) } : { ...value }
-        )
+            value.path !== undefined ? { ...value, path: decodePath(value.path) } : { ...value }
+          )
         : update.values
     }))
   };
@@ -454,7 +458,9 @@ function getAllPaths() {
  */
 function getPathsByCategory(category) {
   const categoryInfo = PATH_CATEGORIES[category];
-  if (!categoryInfo) {return [];}
+  if (!categoryInfo) {
+    return [];
+  }
 
   return Object.keys(PATH_TO_ID).filter((path) => path.startsWith(categoryInfo.prefix));
 }
