@@ -1140,8 +1140,8 @@ module.exports = function createPlugin(app) {
 
       // Check for MTU issues
       if (packet.length > MAX_SAFE_UDP_PAYLOAD) {
-        app.warn(
-          `Packet size ${packet.length} bytes exceeds safe MTU (${MAX_SAFE_UDP_PAYLOAD}), may fragment. ` +
+        app.debug(
+          `Warning: Packet size ${packet.length} bytes exceeds safe MTU (${MAX_SAFE_UDP_PAYLOAD}), may fragment. ` +
             "Consider reducing delta timer interval or filtering paths."
         );
       }
@@ -1217,9 +1217,21 @@ module.exports = function createPlugin(app) {
         const jsonKey = Object.keys(jsonContent)[i];
         let deltaMessage = jsonContent[jsonKey];
 
+        // Skip null or undefined delta messages
+        if (deltaMessage == null) {
+          app.debug(`Skipping null delta message at index ${i}`);
+          continue;
+        }
+
         // Decode path dictionary if enabled
         if (pluginOptions.usePathDictionary) {
           deltaMessage = decodeDelta(deltaMessage);
+        }
+
+        // Skip if decoding returned null
+        if (deltaMessage == null) {
+          app.debug(`Skipping null delta message after decoding at index ${i}`);
+          continue;
         }
 
         // Track path stats for server-side analytics (reuse size)
