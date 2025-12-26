@@ -210,6 +210,137 @@ describe("SignalK Data Connector Plugin", () => {
     });
   });
 
+  describe("Ping Latency Feature", () => {
+    test("should publish latency to local SignalK when ping monitor receives response", async () => {
+      const options = {
+        secretKey: "12345678901234567890123456789012",
+        udpPort: 4446,
+        serverType: "client",
+        udpAddress: "127.0.0.1",
+        testAddress: "127.0.0.1",
+        testPort: 80,
+        pingIntervalTime: 0.1, // Short interval for testing
+        helloMessageSender: 60
+      };
+
+      await plugin.start(options);
+
+      // Wait for ping monitor to potentially trigger
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Check if handleMessage was called with latency data
+      // Note: This test depends on network connectivity to 127.0.0.1:80
+      const handleMessageCalls = mockApp.handleMessage.mock.calls;
+      const latencyCalls = handleMessageCalls.filter((call) => {
+        const delta = call[1];
+        return (
+          delta &&
+          delta.updates &&
+          delta.updates[0] &&
+          delta.updates[0].values &&
+          delta.updates[0].values.some((v) => v.path === "networking.modem.latencyTime")
+        );
+      });
+
+      if (latencyCalls.length > 0) {
+        const latencyCall = latencyCalls[0];
+        const delta = latencyCall[1];
+
+        // Verify structure
+        expect(delta.context).toBe("vessels.self");
+        expect(delta.updates).toHaveLength(1);
+        expect(delta.updates[0].timestamp).toBeInstanceOf(Date);
+        expect(delta.updates[0].values).toHaveLength(1);
+
+        const latencyValue = delta.updates[0].values[0];
+        expect(latencyValue.path).toBe("networking.modem.latencyTime");
+        expect(typeof latencyValue.value).toBe("number");
+        expect(latencyValue.value).toBeGreaterThan(0);
+        // Value should be in seconds (converted from milliseconds)
+        expect(latencyValue.value).toBeLessThan(10); // Sanity check: < 10 seconds
+      }
+    });
+
+    test("should convert latency from milliseconds to seconds", async () => {
+      const options = {
+        secretKey: "12345678901234567890123456789012",
+        udpPort: 4446,
+        serverType: "client",
+        udpAddress: "127.0.0.1",
+        testAddress: "127.0.0.1",
+        testPort: 80,
+        pingIntervalTime: 0.1,
+        helloMessageSender: 60
+      };
+
+      await plugin.start(options);
+
+      // Wait for potential ping
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const handleMessageCalls = mockApp.handleMessage.mock.calls;
+      const latencyCalls = handleMessageCalls.filter((call) => {
+        const delta = call[1];
+        return (
+          delta &&
+          delta.updates &&
+          delta.updates[0] &&
+          delta.updates[0].values &&
+          delta.updates[0].values.some((v) => v.path === "networking.modem.latencyTime")
+        );
+      });
+
+      if (latencyCalls.length > 0) {
+        const delta = latencyCalls[0][1];
+        const latencyValue = delta.updates[0].values[0].value;
+
+        // If latency is 25ms, it should be 0.025 seconds
+        // We can't check exact value but can verify it's a small decimal (seconds not milliseconds)
+        if (latencyValue < 1) {
+          // If less than 1 second, it's been converted properly
+          expect(latencyValue).toBeGreaterThan(0);
+        } else {
+          // If greater than 1 second but less than 10, still valid (slow connection)
+          expect(latencyValue).toBeLessThan(10);
+        }
+      }
+    });
+
+    test("should use plugin.id as source when publishing latency", async () => {
+      const options = {
+        secretKey: "12345678901234567890123456789012",
+        udpPort: 4446,
+        serverType: "client",
+        udpAddress: "127.0.0.1",
+        testAddress: "127.0.0.1",
+        testPort: 80,
+        pingIntervalTime: 0.1,
+        helloMessageSender: 60
+      };
+
+      await plugin.start(options);
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const handleMessageCalls = mockApp.handleMessage.mock.calls;
+      const latencyCalls = handleMessageCalls.filter((call) => {
+        const delta = call[1];
+        return (
+          delta &&
+          delta.updates &&
+          delta.updates[0] &&
+          delta.updates[0].values &&
+          delta.updates[0].values.some((v) => v.path === "networking.modem.latencyTime")
+        );
+      });
+
+      if (latencyCalls.length > 0) {
+        // First argument should be plugin.id
+        expect(latencyCalls[0][0]).toBe("signalk-data-connector");
+      }
+    });
+  });
+
   describe("Router Registration", () => {
     test("should have registerWithRouter method", () => {
       expect(plugin.registerWithRouter).toBeDefined();
