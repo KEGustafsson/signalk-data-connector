@@ -70,6 +70,7 @@ module.exports = function createPlugin(app) {
   let socketUdp;
   let readyToSend = false;
   let helloMessageSender;
+  let latencySender; // Interval for sending latency data
   let pingTimeout;
   let pingMonitor;
   let deltaTimer;
@@ -976,6 +977,29 @@ module.exports = function createPlugin(app) {
             updates: [
               {
                 timestamp: new Date(Date.now()),
+                values: []
+              }
+            ]
+          };
+          app.debug("Sending hello message (no recent data transmission)");
+          app.debug(JSON.stringify(fixedDelta, null, 2));
+          deltasFixed.push(fixedDelta);
+          await packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
+          deltasFixed = [];
+        } else {
+          app.debug(`Skipping hello message (last packet ${timeSinceLastPacket}ms ago)`);
+        }
+      }, helloInterval);
+
+      // Latency sender - always sends latency data at regular intervals
+      // This runs independently of hello messages to ensure latency is always reported
+      latencySender = setInterval(async () => {
+        if (readyToSend) {
+          const latencyDelta = {
+            context: "vessels.urn:mrn:imo:mmsi:" + app.getSelfPath("mmsi"),
+            updates: [
+              {
+                timestamp: new Date(Date.now()),
                 values: [
                   {
                     path: "networking.modem.latencyTime",
@@ -986,14 +1010,11 @@ module.exports = function createPlugin(app) {
             ]
           };
           app.debug(
-            `Sending hello message (no recent data transmission) with latency: ${currentPingLatency !== null ? currentPingLatency + "ms" : "null"}`
+            `Sending latency data: ${currentPingLatency !== null ? currentPingLatency + "ms" : "null"}`
           );
-          app.debug(JSON.stringify(fixedDelta, null, 2));
-          deltasFixed.push(fixedDelta);
+          deltasFixed.push(latencyDelta);
           await packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
           deltasFixed = [];
-        } else {
-          app.debug(`Skipping hello message (last packet ${timeSinceLastPacket}ms ago)`);
         }
       }, helloInterval);
 
@@ -1370,6 +1391,7 @@ module.exports = function createPlugin(app) {
     lastSentenceFilterHash = null;
     excludedSentences = ["GSV"];
     lastPacketTime = 0;
+    currentPingLatency = null;
 
     // Reset metrics for fresh start
     metrics.startTime = Date.now();
@@ -1402,6 +1424,7 @@ module.exports = function createPlugin(app) {
 
     // Clear intervals and timeouts
     clearInterval(helloMessageSender);
+    clearInterval(latencySender);
     clearInterval(rateLimitCleanupInterval);
     clearTimeout(pingTimeout);
     clearTimeout(deltaTimer);
