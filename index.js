@@ -79,6 +79,7 @@ module.exports = function createPlugin(app) {
   let timer = false;
   let pluginOptions; // Store options for access in event handlers
   let lastPacketTime = 0; // Track last packet send time for hello message suppression
+  let currentPingLatency = null; // Store current ping latency in milliseconds
 
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
@@ -978,13 +979,15 @@ module.exports = function createPlugin(app) {
                 values: [
                   {
                     path: "networking.modem.latencyTime",
-                    value: new Date(Date.now())
+                    value: currentPingLatency !== null ? currentPingLatency / 1000 : null // Convert ms to seconds for SignalK
                   }
                 ]
               }
             ]
           };
-          app.debug("Sending hello message (no recent data transmission)");
+          app.debug(
+            `Sending hello message (no recent data transmission) with latency: ${currentPingLatency !== null ? currentPingLatency + "ms" : "null"}`
+          );
           app.debug(JSON.stringify(fixedDelta, null, 2));
           deltasFixed.push(fixedDelta);
           await packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
@@ -1016,7 +1019,7 @@ module.exports = function createPlugin(app) {
         protocol: "tcp"
       });
 
-      pingMonitor.on("up", function (_res, _state) {
+      pingMonitor.on("up", function (res, _state) {
         readyToSend = true;
         clearTimeout(pingTimeout);
         pingTimeout = setTimeout(
@@ -1025,15 +1028,22 @@ module.exports = function createPlugin(app) {
           },
           options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
         );
-        app.debug("Connection monitor: up");
+        // Capture ping latency from response
+        if (res && res.time !== undefined) {
+          currentPingLatency = res.time;
+          app.debug(`Connection monitor: up (latency: ${res.time}ms)`);
+        } else {
+          app.debug("Connection monitor: up");
+        }
       });
 
       pingMonitor.on("down", function (_res, _state) {
         readyToSend = false;
+        currentPingLatency = null; // Clear latency when connection is down
         app.debug("Connection monitor: down");
       });
 
-      pingMonitor.on("restored", function (_res, _state) {
+      pingMonitor.on("restored", function (res, _state) {
         readyToSend = true;
         clearTimeout(pingTimeout);
         pingTimeout = setTimeout(
@@ -1042,21 +1052,30 @@ module.exports = function createPlugin(app) {
           },
           options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
         );
-        app.debug("Connection monitor: restored");
+        // Capture ping latency from response
+        if (res && res.time !== undefined) {
+          currentPingLatency = res.time;
+          app.debug(`Connection monitor: restored (latency: ${res.time}ms)`);
+        } else {
+          app.debug("Connection monitor: restored");
+        }
       });
 
       pingMonitor.on("stop", function (_res, _state) {
         readyToSend = false;
+        currentPingLatency = null; // Clear latency when stopped
         app.debug("Connection monitor: stopped");
       });
 
       pingMonitor.on("timeout", function (_error, _res) {
         readyToSend = false;
+        currentPingLatency = null; // Clear latency on timeout
         app.debug("Connection monitor: timeout");
       });
 
       pingMonitor.on("error", function (error, _res) {
         readyToSend = false;
+        currentPingLatency = null; // Clear latency on error
         if (error) {
           const errorMessage =
             error.code === "ENOTFOUND" || error.code === "EAI_AGAIN"
