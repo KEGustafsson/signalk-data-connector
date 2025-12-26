@@ -70,7 +70,6 @@ module.exports = function createPlugin(app) {
   let socketUdp;
   let readyToSend = false;
   let helloMessageSender;
-  let latencySender; // Interval for sending latency data
   let pingTimeout;
   let pingMonitor;
   let deltaTimer;
@@ -80,7 +79,6 @@ module.exports = function createPlugin(app) {
   let timer = false;
   let pluginOptions; // Store options for access in event handlers
   let lastPacketTime = 0; // Track last packet send time for hello message suppression
-  let currentPingLatency = null; // Store current ping latency in milliseconds
 
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
@@ -991,33 +989,6 @@ module.exports = function createPlugin(app) {
         }
       }, helloInterval);
 
-      // Latency sender - always sends latency data at regular intervals
-      // This runs independently of hello messages to ensure latency is always reported
-      latencySender = setInterval(async () => {
-        if (readyToSend) {
-          const latencyDelta = {
-            context: "vessels.urn:mrn:imo:mmsi:" + app.getSelfPath("mmsi"),
-            updates: [
-              {
-                timestamp: new Date(Date.now()),
-                values: [
-                  {
-                    path: "networking.modem.latencyTime",
-                    value: currentPingLatency !== null ? currentPingLatency / 1000 : null // Convert ms to seconds for SignalK
-                  }
-                ]
-              }
-            ]
-          };
-          app.debug(
-            `Sending latency data: ${currentPingLatency !== null ? currentPingLatency + "ms" : "null"}`
-          );
-          deltasFixed.push(latencyDelta);
-          await packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
-          deltasFixed = [];
-        }
-      }, helloInterval);
-
       socketUdp = dgram.createSocket({ type: "udp4", reuseAddr: true });
 
       // Add error handler for client socket
@@ -1049,9 +1020,23 @@ module.exports = function createPlugin(app) {
           },
           options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
         );
-        // Capture ping latency from response
+        // Publish ping latency to local SignalK
         if (res && res.time !== undefined) {
-          currentPingLatency = res.time;
+          const latencyDelta = {
+            context: "vessels.self",
+            updates: [
+              {
+                timestamp: new Date(),
+                values: [
+                  {
+                    path: "networking.modem.latencyTime",
+                    value: res.time / 1000 // Convert ms to seconds for SignalK
+                  }
+                ]
+              }
+            ]
+          };
+          app.handleMessage(plugin.id, latencyDelta);
           app.debug(`Connection monitor: up (latency: ${res.time}ms)`);
         } else {
           app.debug("Connection monitor: up");
@@ -1060,7 +1045,6 @@ module.exports = function createPlugin(app) {
 
       pingMonitor.on("down", function (_res, _state) {
         readyToSend = false;
-        currentPingLatency = null; // Clear latency when connection is down
         app.debug("Connection monitor: down");
       });
 
@@ -1073,9 +1057,23 @@ module.exports = function createPlugin(app) {
           },
           options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
         );
-        // Capture ping latency from response
+        // Publish ping latency to local SignalK
         if (res && res.time !== undefined) {
-          currentPingLatency = res.time;
+          const latencyDelta = {
+            context: "vessels.self",
+            updates: [
+              {
+                timestamp: new Date(),
+                values: [
+                  {
+                    path: "networking.modem.latencyTime",
+                    value: res.time / 1000 // Convert ms to seconds for SignalK
+                  }
+                ]
+              }
+            ]
+          };
+          app.handleMessage(plugin.id, latencyDelta);
           app.debug(`Connection monitor: restored (latency: ${res.time}ms)`);
         } else {
           app.debug("Connection monitor: restored");
@@ -1084,19 +1082,16 @@ module.exports = function createPlugin(app) {
 
       pingMonitor.on("stop", function (_res, _state) {
         readyToSend = false;
-        currentPingLatency = null; // Clear latency when stopped
         app.debug("Connection monitor: stopped");
       });
 
       pingMonitor.on("timeout", function (_error, _res) {
         readyToSend = false;
-        currentPingLatency = null; // Clear latency on timeout
         app.debug("Connection monitor: timeout");
       });
 
       pingMonitor.on("error", function (error, _res) {
         readyToSend = false;
-        currentPingLatency = null; // Clear latency on error
         if (error) {
           const errorMessage =
             error.code === "ENOTFOUND" || error.code === "EAI_AGAIN"
@@ -1391,7 +1386,6 @@ module.exports = function createPlugin(app) {
     lastSentenceFilterHash = null;
     excludedSentences = ["GSV"];
     lastPacketTime = 0;
-    currentPingLatency = null;
 
     // Reset metrics for fresh start
     metrics.startTime = Date.now();
@@ -1424,7 +1418,6 @@ module.exports = function createPlugin(app) {
 
     // Clear intervals and timeouts
     clearInterval(helloMessageSender);
-    clearInterval(latencySender);
     clearInterval(rateLimitCleanupInterval);
     clearTimeout(pingTimeout);
     clearTimeout(deltaTimer);
