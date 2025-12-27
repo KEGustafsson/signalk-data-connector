@@ -1,10 +1,49 @@
 import "./styles.css";
 
 // Constants
+const API_BASE_PATH = "/plugins/signalk-data-connector";
 const DELTA_TIMER_MIN = 100;
 const DELTA_TIMER_MAX = 10000;
 const NOTIFICATION_TIMEOUT = 4000;
 const METRICS_REFRESH_INTERVAL = 15000; // 15 seconds (optimized from 5s to reduce server load)
+
+// HTML Template Helpers
+const renderCard = (title, subtitle, contentId, contentClass = "") => `
+  <div class="config-section">
+    <div class="card">
+      <div class="card-header">
+        <h2>${title}</h2>
+        ${subtitle ? `<p class="subtitle">${subtitle}</p>` : ""}
+      </div>
+      <div class="card-content">
+        <div id="${contentId}" class="${contentClass || contentId + "-info"}">
+          <p>Loading ${title.toLowerCase()}...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+`;
+
+const renderStatItem = (label, value, hasError = false) => `
+  <div class="stat-item${hasError ? " error" : ""}">
+    <span class="stat-label">${label}:</span>
+    <span class="stat-value">${value}</span>
+  </div>
+`;
+
+const renderMetricItem = (label, value, statusClass = "") => `
+  <div class="metric-item${statusClass ? " " + statusClass : ""}">
+    <div class="metric-label">${label}</div>
+    <div class="metric-value">${value}</div>
+  </div>
+`;
+
+const renderBwStat = (label, value, isHighlight = false, isSuccess = false) => `
+  <div class="bw-stat${isHighlight ? " highlight" : ""}">
+    <span class="bw-label">${label}:</span>
+    <span class="bw-value${isSuccess ? " success-text" : ""}">${value}</span>
+  </div>
+`;
 
 class DataConnectorConfig {
   constructor() {
@@ -40,7 +79,7 @@ class DataConnectorConfig {
   async checkServerMode() {
     try {
       // Try to access the configuration API
-      const response = await fetch("/plugins/signalk-data-connector/config/delta_timer.json");
+      const response = await fetch(`${API_BASE_PATH}/config/delta_timer.json`);
       this.isServerMode = !response.ok && (response.status === 404 || response.status === 405);
     } catch (error) {
       // If fetch fails completely, assume server mode
@@ -50,18 +89,14 @@ class DataConnectorConfig {
 
   async loadConfigurations() {
     try {
-      // Load delta timer configuration
-      const deltaResponse = await fetch("/plugins/signalk-data-connector/config/delta_timer.json");
+      const [deltaResponse, subResponse, filterResponse] = await Promise.all([
+        fetch(`${API_BASE_PATH}/config/delta_timer.json`),
+        fetch(`${API_BASE_PATH}/config/subscription.json`),
+        fetch(`${API_BASE_PATH}/config/sentence_filter.json`)
+      ]);
+
       this.deltaTimerConfig = await deltaResponse.json();
-
-      // Load subscription configuration
-      const subResponse = await fetch("/plugins/signalk-data-connector/config/subscription.json");
       this.subscriptionConfig = await subResponse.json();
-
-      // Load sentence filter configuration
-      const filterResponse = await fetch(
-        "/plugins/signalk-data-connector/config/sentence_filter.json"
-      );
       this.sentenceFilterConfig = await filterResponse.json();
     } catch (error) {
       this.showNotification("Error loading configurations: " + error.message, "error");
@@ -220,11 +255,9 @@ class DataConnectorConfig {
     const config = { deltaTimer: deltaTimer };
 
     try {
-      const response = await fetch("/plugins/signalk-data-connector/config/delta_timer.json", {
+      const response = await fetch(`${API_BASE_PATH}/config/delta_timer.json`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config)
       });
 
@@ -254,11 +287,9 @@ class DataConnectorConfig {
         throw new Error("Subscribe array is required");
       }
 
-      const response = await fetch("/plugins/signalk-data-connector/config/subscription.json", {
+      const response = await fetch(`${API_BASE_PATH}/config/subscription.json`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config)
       });
 
@@ -286,11 +317,9 @@ class DataConnectorConfig {
 
       const config = { excludedSentences: excludedSentences };
 
-      const response = await fetch("/plugins/signalk-data-connector/config/sentence_filter.json", {
+      const response = await fetch(`${API_BASE_PATH}/config/sentence_filter.json`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config)
       });
 
@@ -308,7 +337,7 @@ class DataConnectorConfig {
 
   async loadMetrics() {
     try {
-      const response = await fetch("/plugins/signalk-data-connector/metrics");
+      const response = await fetch(`${API_BASE_PATH}/metrics`);
       if (response.ok) {
         const metrics = await response.json();
         this.updateMetricsDisplay(metrics);
@@ -343,104 +372,49 @@ class DataConnectorConfig {
       return;
     }
 
+    const isClient = metrics.mode === "client";
+    const { stats, status, uptime } = metrics;
+
     const hasErrors =
-      metrics.stats.udpSendErrors > 0 ||
-      metrics.stats.compressionErrors > 0 ||
-      metrics.stats.encryptionErrors > 0 ||
-      metrics.stats.subscriptionErrors > 0;
+      stats.udpSendErrors > 0 ||
+      stats.compressionErrors > 0 ||
+      stats.encryptionErrors > 0 ||
+      stats.subscriptionErrors > 0;
+
+    // Build metrics grid items
+    const metricsGridItems = [
+      renderMetricItem("Uptime", uptime.formatted),
+      renderMetricItem("Mode", isClient ? "📱 Client" : "🖥️ Server"),
+      renderMetricItem("Status", status.readyToSend ? "✓ Ready" : "✗ Not Ready", status.readyToSend ? "success" : "error"),
+      isClient ? renderMetricItem("Buffered Deltas", status.deltasBuffered) : ""
+    ].join("");
+
+    // Build stats items
+    const statsItems = [
+      isClient
+        ? renderStatItem("Deltas Sent", stats.deltasSent.toLocaleString())
+        : renderStatItem("Deltas Received", stats.deltasReceived.toLocaleString()),
+      isClient ? renderStatItem("UDP Send Errors", stats.udpSendErrors, stats.udpSendErrors > 0) : "",
+      isClient ? renderStatItem("UDP Retries", stats.udpRetries) : "",
+      renderStatItem("Compression Errors", stats.compressionErrors, stats.compressionErrors > 0),
+      renderStatItem("Encryption Errors", stats.encryptionErrors, stats.encryptionErrors > 0),
+      isClient ? renderStatItem("Subscription Errors", stats.subscriptionErrors, stats.subscriptionErrors > 0) : ""
+    ].join("");
 
     let metricsHtml = `
       <h4>📊 Performance Metrics</h4>
-      <div class="metrics-grid">
-        <div class="metric-item">
-          <div class="metric-label">Uptime</div>
-          <div class="metric-value">${metrics.uptime.formatted}</div>
-        </div>
-        <div class="metric-item">
-          <div class="metric-label">Mode</div>
-          <div class="metric-value">${metrics.mode === "server" ? "🖥️ Server" : "📱 Client"}</div>
-        </div>
-        <div class="metric-item ${metrics.status.readyToSend ? "success" : "error"}">
-          <div class="metric-label">Status</div>
-          <div class="metric-value">${metrics.status.readyToSend ? "✓ Ready" : "✗ Not Ready"}</div>
-        </div>
-        ${
-          metrics.mode === "client"
-            ? `
-        <div class="metric-item">
-          <div class="metric-label">Buffered Deltas</div>
-          <div class="metric-value">${metrics.status.deltasBuffered}</div>
-        </div>
-        `
-            : ""
-        }
-      </div>
-
+      <div class="metrics-grid">${metricsGridItems}</div>
       <div class="metrics-stats">
         <h5>Transmission Statistics</h5>
-        <div class="stats-grid">
-          ${
-            metrics.mode === "client"
-              ? `
-          <div class="stat-item">
-            <span class="stat-label">Deltas Sent:</span>
-            <span class="stat-value">${metrics.stats.deltasSent.toLocaleString()}</span>
-          </div>
-          `
-              : ""
-          }
-          ${
-            metrics.mode === "server"
-              ? `
-          <div class="stat-item">
-            <span class="stat-label">Deltas Received:</span>
-            <span class="stat-value">${metrics.stats.deltasReceived.toLocaleString()}</span>
-          </div>
-          `
-              : ""
-          }
-          ${
-            metrics.mode === "client"
-              ? `
-          <div class="stat-item ${metrics.stats.udpSendErrors > 0 ? "error" : ""}">
-            <span class="stat-label">UDP Send Errors:</span>
-            <span class="stat-value">${metrics.stats.udpSendErrors}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">UDP Retries:</span>
-            <span class="stat-value">${metrics.stats.udpRetries}</span>
-          </div>
-          `
-              : ""
-          }
-          <div class="stat-item ${metrics.stats.compressionErrors > 0 ? "error" : ""}">
-            <span class="stat-label">Compression Errors:</span>
-            <span class="stat-value">${metrics.stats.compressionErrors}</span>
-          </div>
-          <div class="stat-item ${metrics.stats.encryptionErrors > 0 ? "error" : ""}">
-            <span class="stat-label">Encryption Errors:</span>
-            <span class="stat-value">${metrics.stats.encryptionErrors}</span>
-          </div>
-          ${
-            metrics.mode === "client"
-              ? `
-          <div class="stat-item ${metrics.stats.subscriptionErrors > 0 ? "error" : ""}">
-            <span class="stat-label">Subscription Errors:</span>
-            <span class="stat-value">${metrics.stats.subscriptionErrors}</span>
-          </div>
-          `
-              : ""
-          }
-        </div>
+        <div class="stats-grid">${statsItems}</div>
       </div>
     `;
 
     if (metrics.lastError) {
       const timeAgo = metrics.lastError.timeAgo;
-      const timeAgoStr =
-        timeAgo < 60000
-          ? `${Math.floor(timeAgo / 1000)}s ago`
-          : `${Math.floor(timeAgo / 60000)}m ago`;
+      const timeAgoStr = timeAgo < 60000
+        ? `${Math.floor(timeAgo / 1000)}s ago`
+        : `${Math.floor(timeAgo / 60000)}m ago`;
 
       metricsHtml += `
         <div class="metrics-error">
@@ -473,6 +447,21 @@ class DataConnectorConfig {
     const savedBytes = isClient ? bw.bytesOutRaw - bw.bytesOut : bw.bytesInRaw - bw.bytesIn;
     const savedFormatted = this.formatBytes(savedBytes > 0 ? savedBytes : 0);
 
+    // Build bandwidth stats based on mode
+    const bandwidthStats = isClient
+      ? [
+          renderBwStat("Total Sent (Compressed)", bw.bytesOutFormatted),
+          renderBwStat("Total Raw (Before Compression)", bw.bytesOutRawFormatted),
+          renderBwStat("Bandwidth Saved", savedFormatted, true, true),
+          renderBwStat("Packets Sent", bw.packetsOut.toLocaleString())
+        ]
+      : [
+          renderBwStat("Total Received (Compressed)", bw.bytesInFormatted),
+          renderBwStat("Total Raw (After Decompression)", this.formatBytes(bw.bytesInRaw || 0)),
+          renderBwStat("Bandwidth Saved", savedFormatted, true, true),
+          renderBwStat("Packets Received", bw.packetsIn.toLocaleString())
+        ];
+
     const bandwidthHtml = `
       <div class="bandwidth-dashboard">
         <div class="bandwidth-hero">
@@ -492,47 +481,7 @@ class DataConnectorConfig {
 
         <div class="bandwidth-details">
           <h5>📊 Bandwidth Details</h5>
-          <div class="bandwidth-grid">
-            ${
-              isClient
-                ? `
-            <div class="bw-stat">
-              <span class="bw-label">Total Sent (Compressed):</span>
-              <span class="bw-value">${bw.bytesOutFormatted}</span>
-            </div>
-            <div class="bw-stat">
-              <span class="bw-label">Total Raw (Before Compression):</span>
-              <span class="bw-value">${bw.bytesOutRawFormatted}</span>
-            </div>
-            <div class="bw-stat highlight">
-              <span class="bw-label">Bandwidth Saved:</span>
-              <span class="bw-value success-text">${savedFormatted}</span>
-            </div>
-            <div class="bw-stat">
-              <span class="bw-label">Packets Sent:</span>
-              <span class="bw-value">${bw.packetsOut.toLocaleString()}</span>
-            </div>
-            `
-                : `
-            <div class="bw-stat">
-              <span class="bw-label">Total Received (Compressed):</span>
-              <span class="bw-value">${bw.bytesInFormatted}</span>
-            </div>
-            <div class="bw-stat">
-              <span class="bw-label">Total Raw (After Decompression):</span>
-              <span class="bw-value">${this.formatBytes(bw.bytesInRaw || 0)}</span>
-            </div>
-            <div class="bw-stat highlight">
-              <span class="bw-label">Bandwidth Saved:</span>
-              <span class="bw-value success-text">${savedFormatted}</span>
-            </div>
-            <div class="bw-stat">
-              <span class="bw-label">Packets Received:</span>
-              <span class="bw-value">${bw.packetsIn.toLocaleString()}</span>
-            </div>
-            `
-            }
-          </div>
+          <div class="bandwidth-grid">${bandwidthStats.join("")}</div>
         </div>
 
         ${this.renderBandwidthChart(bw.history, isClient)}
@@ -767,72 +716,38 @@ class DataConnectorConfig {
 
   showServerModeUI() {
     const container = document.querySelector(".container");
-    container.innerHTML = `
-            <div class="config-section">
-                <div class="card server-mode-card">
-                    <div class="card-header">
-                        <h2>Server Mode Active</h2>
-                        <p>This plugin is running in Server Mode - receiving data from clients</p>
-                    </div>
-                    <div class="card-content">
-                        <div class="server-mode-info">
-                            <div class="info-grid compact">
-                                <div class="info-item">
-                                    <h4>Configuration</h4>
-                                    <p>Managed through SignalK plugin settings</p>
-                                </div>
-                                <div class="info-item">
-                                    <h4>Data Flow</h4>
-                                    <p>Client Devices → Server → SignalK</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-            <div class="config-section">
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Bandwidth Monitor</h2>
-                        <p class="subtitle">Network reception statistics</p>
-                    </div>
-                    <div class="card-content">
-                        <div id="bandwidth" class="bandwidth-info">
-                            <p>Loading bandwidth data...</p>
-                        </div>
-                    </div>
+    // Server mode info card (special styling)
+    const serverModeCard = `
+      <div class="config-section">
+        <div class="card server-mode-card">
+          <div class="card-header">
+            <h2>Server Mode Active</h2>
+            <p>This plugin is running in Server Mode - receiving data from clients</p>
+          </div>
+          <div class="card-content">
+            <div class="server-mode-info">
+              <div class="info-grid compact">
+                <div class="info-item">
+                  <h4>Configuration</h4>
+                  <p>Managed through SignalK plugin settings</p>
                 </div>
+                <div class="info-item">
+                  <h4>Data Flow</h4>
+                  <p>Client Devices → Server → SignalK</p>
+                </div>
+              </div>
             </div>
+          </div>
+        </div>
+      </div>
+    `;
 
-            <div class="config-section">
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Path Analytics</h2>
-                        <p class="subtitle">Incoming data volume by SignalK path</p>
-                    </div>
-                    <div class="card-content">
-                        <div id="pathAnalytics" class="path-analytics-info">
-                            <p>Loading path analytics...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="config-section">
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Performance Metrics</h2>
-                        <p class="subtitle">Real-time reception statistics (auto-refreshes every 15 seconds)</p>
-                    </div>
-                    <div class="card-content">
-                        <div id="metrics" class="metrics-info">
-                            <p>Loading metrics...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+    container.innerHTML =
+      serverModeCard +
+      renderCard("Bandwidth Monitor", "Network reception statistics", "bandwidth") +
+      renderCard("Path Analytics", "Incoming data volume by SignalK path", "pathAnalytics") +
+      renderCard("Performance Metrics", "Real-time reception statistics (auto-refreshes every 15 seconds)", "metrics");
   }
 
   showNotification(message, type = "success") {
