@@ -975,12 +975,7 @@ module.exports = function createPlugin(app) {
             updates: [
               {
                 timestamp: new Date(Date.now()),
-                values: [
-                  {
-                    path: "networking.modem.latencyTime",
-                    value: new Date(Date.now())
-                  }
-                ]
+                values: []
               }
             ]
           };
@@ -1016,7 +1011,7 @@ module.exports = function createPlugin(app) {
         protocol: "tcp"
       });
 
-      pingMonitor.on("up", function (_res, _state) {
+      pingMonitor.on("up", function (res, _state) {
         readyToSend = true;
         clearTimeout(pingTimeout);
         pingTimeout = setTimeout(
@@ -1025,7 +1020,27 @@ module.exports = function createPlugin(app) {
           },
           options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
         );
-        app.debug("Connection monitor: up");
+        // Publish ping RTT (Round Trip Time) to local SignalK
+        if (res && res.time !== undefined) {
+          const rttDelta = {
+            context: "vessels.self",
+            updates: [
+              {
+                timestamp: new Date(),
+                values: [
+                  {
+                    path: "networking.modem.rtt",
+                    value: res.time / 1000 // Convert ms to seconds for SignalK
+                  }
+                ]
+              }
+            ]
+          };
+          app.handleMessage(plugin.id, rttDelta);
+          app.debug(`Connection monitor: up (RTT: ${res.time}ms)`);
+        } else {
+          app.debug("Connection monitor: up");
+        }
       });
 
       pingMonitor.on("down", function (_res, _state) {
@@ -1033,7 +1048,7 @@ module.exports = function createPlugin(app) {
         app.debug("Connection monitor: down");
       });
 
-      pingMonitor.on("restored", function (_res, _state) {
+      pingMonitor.on("restored", function (res, _state) {
         readyToSend = true;
         clearTimeout(pingTimeout);
         pingTimeout = setTimeout(
@@ -1042,7 +1057,27 @@ module.exports = function createPlugin(app) {
           },
           options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
         );
-        app.debug("Connection monitor: restored");
+        // Publish ping RTT (Round Trip Time) to local SignalK
+        if (res && res.time !== undefined) {
+          const rttDelta = {
+            context: "vessels.self",
+            updates: [
+              {
+                timestamp: new Date(),
+                values: [
+                  {
+                    path: "networking.modem.rtt",
+                    value: res.time / 1000 // Convert ms to seconds for SignalK
+                  }
+                ]
+              }
+            ]
+          };
+          app.handleMessage(plugin.id, rttDelta);
+          app.debug(`Connection monitor: restored (RTT: ${res.time}ms)`);
+        } else {
+          app.debug("Connection monitor: restored");
+        }
       });
 
       pingMonitor.on("stop", function (_res, _state) {

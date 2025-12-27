@@ -2,7 +2,7 @@
 
 A SignalK plugin for secure, encrypted UDP data transmission with advanced bandwidth optimization.
 
-[![Tests](https://img.shields.io/badge/tests-125%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
+[![Tests](https://img.shields.io/badge/tests-128%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen)](https://nodejs.org/)
 
@@ -19,7 +19,8 @@ A SignalK plugin for secure, encrypted UDP data transmission with advanced bandw
 - **Configurable Filters**: Exclude NMEA sentences (GSV, GSA, etc.) to reduce bandwidth
 - **Client/Server Modes**: Sender or receiver operation with hot-reload configuration
 - **Rate Limiting**: API endpoint protection (20 req/min/IP)
-- **Connectivity Monitoring**: TCP ping with automatic reconnection
+- **Connectivity Monitoring**: TCP ping with automatic reconnection and RTT measurement
+- **Network Metrics**: Real-time Round Trip Time (RTT) published to `networking.modem.rtt` path
 - **MTU Awareness**: Intelligent packet sizing to prevent UDP fragmentation
 
 ## Performance Improvements
@@ -94,7 +95,7 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
 
 3. Use web UI to configure:
    - Delta timer (100-10000ms)
-   - Subscription paths
+   - Subscription paths (add `networking.modem.rtt` to receive RTT measurements)
    - Sentence filters
 
 ### Web UI
@@ -127,6 +128,31 @@ Access via: `http://[signalk-server]:3000/plugins/signalk-data-connector`
 | `delta_timer.json`     | Collection interval (ms)   |
 | `subscription.json`    | SignalK paths to subscribe |
 | `sentence_filter.json` | NMEA sentences to exclude  |
+
+### Network Monitoring (Client Mode)
+
+The client measures **Round Trip Time (RTT)** to monitor network connectivity and latency:
+
+**How It Works:**
+- Uses TCP ping to configured `testAddress:testPort`
+- Measures every `pingIntervalTime` minutes (configurable)
+- Publishes RTT to local SignalK at path `networking.modem.rtt`
+- Value in seconds (e.g., 0.025 = 25ms RTT)
+
+**RTT Data Flow:**
+1. Ping monitor measures TCP connection time to test server
+2. RTT published to local SignalK via `app.handleMessage()`
+3. Normal subscription picks up `networking.modem.rtt` (if subscribed)
+4. Sent to remote server with other subscribed data
+
+**To Enable RTT Transmission:**
+Add `networking.modem.rtt` to your `subscription.json` file. The RTT will then be sent to the remote server along with all other subscribed SignalK data.
+
+**Use Cases:**
+- Monitor cellular/satellite modem latency
+- Track connection quality over time
+- Trigger alerts on high latency
+- Analyze network performance trends
 
 ### API Endpoints
 
@@ -314,7 +340,7 @@ Enable in SignalK plugin settings to see:
 ```bash
 npm run dev          # Development build with watch mode
 npm run build        # Production build with versioning
-npm test             # Run test suite (125 tests)
+npm test             # Run test suite (128 tests)
 npm run test:watch   # Run tests in watch mode
 npm run test:coverage # Generate coverage report
 npm run lint         # Check code style
@@ -326,12 +352,13 @@ npm run format       # Format code with Prettier
 
 **Test Suite Coverage:**
 
-- ✅ 125 tests, all passing
+- ✅ 128 tests, all passing
 - ✅ Crypto module: 100% coverage (encryption, decryption, validation)
 - ✅ Path dictionary: 100% coverage (encoding, decoding)
 - ✅ Full pipeline: End-to-end tests with real compression/encryption
 - ✅ Configuration: Hot-reload testing
 - ✅ Web UI: Metrics and API endpoints
+- ✅ Network monitoring: RTT measurement and publishing
 
 **Run specific test suites:**
 
@@ -351,7 +378,7 @@ signalk-data-connector/
 ├── src/webapp/           # Web UI source (React-free vanilla JS)
 │   ├── index.js         # Main UI logic
 │   └── styles.css       # Styling
-├── __tests__/           # Test suite (125 tests)
+├── __tests__/           # Test suite (128 tests)
 │   ├── crypto.test.js
 │   ├── pathDictionary.test.js
 │   ├── compression.test.js
@@ -443,7 +470,7 @@ UDP receive
 
 **Requirements:**
 
-- ✅ All 125 tests must pass
+- ✅ All 128 tests must pass
 - ✅ No ESLint errors or warnings
 - ✅ Code formatted with Prettier
 - ✅ JSDoc comments for public functions

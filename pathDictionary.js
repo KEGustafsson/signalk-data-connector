@@ -273,7 +273,7 @@ const PATH_TO_ID = {
   "sails.area.total": 0x0b04,
 
   // Network/Modem paths (0x0Cxx)
-  "networking.modem.latencyTime": 0x0c01,
+  "networking.modem.rtt": 0x0c01,
   "networking.modem.signalStrength": 0x0c02,
   "networking.modem.connectionType": 0x0c03
 };
