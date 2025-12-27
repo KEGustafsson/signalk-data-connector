@@ -794,12 +794,12 @@ class DataConnectorConfig {
             <div class="config-section">
                 <div class="card">
                     <div class="card-header">
-                        <h2>Performance Metrics</h2>
-                        <p class="subtitle">Real-time reception statistics (auto-refreshes every 5 seconds)</p>
+                        <h2>Bandwidth Monitor</h2>
+                        <p class="subtitle">Network reception statistics</p>
                     </div>
                     <div class="card-content">
-                        <div id="metrics" class="metrics-info">
-                            <p>Loading metrics...</p>
+                        <div id="bandwidth" class="bandwidth-info">
+                            <p>Loading bandwidth data...</p>
                         </div>
                     </div>
                 </div>
@@ -822,12 +822,12 @@ class DataConnectorConfig {
             <div class="config-section">
                 <div class="card">
                     <div class="card-header">
-                        <h2>Bandwidth Monitor</h2>
-                        <p class="subtitle">Network reception statistics</p>
+                        <h2>Performance Metrics</h2>
+                        <p class="subtitle">Real-time reception statistics (auto-refreshes every 15 seconds)</p>
                     </div>
                     <div class="card-content">
-                        <div id="bandwidth" class="bandwidth-info">
-                            <p>Loading bandwidth data...</p>
+                        <div id="metrics" class="metrics-info">
+                            <p>Loading metrics...</p>
                         </div>
                     </div>
                 </div>
