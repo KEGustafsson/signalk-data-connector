@@ -1020,24 +1020,24 @@ module.exports = function createPlugin(app) {
           },
           options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
         );
-        // Publish ping latency to local SignalK
+        // Publish ping RTT (Round Trip Time) to local SignalK
         if (res && res.time !== undefined) {
-          const latencyDelta = {
+          const rttDelta = {
             context: "vessels.self",
             updates: [
               {
                 timestamp: new Date(),
                 values: [
                   {
-                    path: "networking.modem.latencyTime",
+                    path: "networking.modem.rtt",
                     value: res.time / 1000 // Convert ms to seconds for SignalK
                   }
                 ]
               }
             ]
           };
-          app.handleMessage(plugin.id, latencyDelta);
-          app.debug(`Connection monitor: up (latency: ${res.time}ms)`);
+          app.handleMessage(plugin.id, rttDelta);
+          app.debug(`Connection monitor: up (RTT: ${res.time}ms)`);
         } else {
           app.debug("Connection monitor: up");
         }
@@ -1057,24 +1057,24 @@ module.exports = function createPlugin(app) {
           },
           options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
         );
-        // Publish ping latency to local SignalK
+        // Publish ping RTT (Round Trip Time) to local SignalK
         if (res && res.time !== undefined) {
-          const latencyDelta = {
+          const rttDelta = {
             context: "vessels.self",
             updates: [
               {
                 timestamp: new Date(),
                 values: [
                   {
-                    path: "networking.modem.latencyTime",
+                    path: "networking.modem.rtt",
                     value: res.time / 1000 // Convert ms to seconds for SignalK
                   }
                 ]
               }
             ]
           };
-          app.handleMessage(plugin.id, latencyDelta);
-          app.debug(`Connection monitor: restored (latency: ${res.time}ms)`);
+          app.handleMessage(plugin.id, rttDelta);
+          app.debug(`Connection monitor: restored (RTT: ${res.time}ms)`);
         } else {
           app.debug("Connection monitor: restored");
         }
