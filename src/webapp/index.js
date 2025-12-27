@@ -95,9 +95,15 @@ class DataConnectorConfig {
         fetch(`${API_BASE_PATH}/config/sentence_filter.json`)
       ]);
 
-      this.deltaTimerConfig = await deltaResponse.json();
-      this.subscriptionConfig = await subResponse.json();
-      this.sentenceFilterConfig = await filterResponse.json();
+      if (deltaResponse.ok) {
+        this.deltaTimerConfig = await deltaResponse.json();
+      }
+      if (subResponse.ok) {
+        this.subscriptionConfig = await subResponse.json();
+      }
+      if (filterResponse.ok) {
+        this.sentenceFilterConfig = await filterResponse.json();
+      }
     } catch (error) {
       this.showNotification("Error loading configurations: " + error.message, "error");
     }
@@ -353,7 +359,6 @@ class DataConnectorConfig {
       clearInterval(this.metricsInterval);
     }
 
-    // Refresh metrics every 5 seconds
     this.metricsInterval = setInterval(() => {
       this.loadMetrics();
     }, METRICS_REFRESH_INTERVAL);
@@ -513,10 +518,11 @@ class DataConnectorConfig {
       .join(" ");
 
     const maxRateFormatted = this.formatBytes(maxRate);
+    const intervalSeconds = METRICS_REFRESH_INTERVAL / 1000;
 
     return `
       <div class="bandwidth-chart">
-        <h5>📈 Rate History (Last ${history.length * 5}s)</h5>
+        <h5>📈 Rate History (Last ${history.length * intervalSeconds}s)</h5>
         <div class="chart-container">
           <svg viewBox="0 0 ${width} ${height}" class="sparkline" preserveAspectRatio="none">
             <polyline
@@ -552,17 +558,8 @@ class DataConnectorConfig {
       return;
     }
 
-    // Group by category
-    const categories = {};
-    paths.forEach((p) => {
-      const category = p.path.split(".")[0];
-      if (!categories[category]) {
-        categories[category] = { paths: [], totalBytes: 0, totalCount: 0 };
-      }
-      categories[category].paths.push(p);
-      categories[category].totalBytes += p.bytes;
-      categories[category].totalCount += p.count;
-    });
+    // Count unique categories
+    const categoryCount = new Set(paths.map((p) => p.path.split(".")[0])).size;
 
     let pathHtml = `
       <div class="path-analytics-dashboard">
@@ -572,7 +569,7 @@ class DataConnectorConfig {
             <span class="summary-label">Active Paths</span>
           </div>
           <div class="summary-stat">
-            <span class="summary-value">${Object.keys(categories).length}</span>
+            <span class="summary-value">${categoryCount}</span>
             <span class="summary-label">Categories</span>
           </div>
         </div>
@@ -628,12 +625,12 @@ class DataConnectorConfig {
   }
 
   formatBytes(bytes) {
-    if (bytes === 0) {
+    if (!bytes || bytes <= 0) {
       return "0 B";
     }
     const k = 1024;
     const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   }
 
@@ -651,14 +648,14 @@ class DataConnectorConfig {
     if (this.deltaTimerConfig) {
       statusHtml += `
                 <div class="status-item">
-                    <strong>Delta Timer:</strong> ${this.deltaTimerConfig.deltaTimer}ms
+                    <strong>Delta Timer:</strong> ${this.escapeHtml(String(this.deltaTimerConfig.deltaTimer))}ms
                     <span class="status-indicator success">✓ Configured</span>
                 </div>
             `;
     } else {
       statusHtml += `
                 <div class="status-item">
-                    <strong>Delta Timer:</strong> 
+                    <strong>Delta Timer:</strong>
                     <span class="status-indicator warning">⚠ Not configured</span>
                 </div>
             `;
@@ -667,14 +664,16 @@ class DataConnectorConfig {
     // Subscription status
     if (this.subscriptionConfig && this.subscriptionConfig.subscribe) {
       const pathCount = this.subscriptionConfig.subscribe.length;
+      const escapedContext = this.escapeHtml(this.subscriptionConfig.context || "");
+      const escapedPaths = this.subscriptionConfig.subscribe.map((s) => this.escapeHtml(s.path)).join(", ");
       statusHtml += `
                 <div class="status-item">
                     <strong>Subscriptions:</strong> ${pathCount} path(s) configured
                     <span class="status-indicator success">✓ Configured</span>
                 </div>
                 <div class="status-details">
-                    <strong>Context:</strong> ${this.subscriptionConfig.context}<br>
-                    <strong>Paths:</strong> ${this.subscriptionConfig.subscribe.map((s) => s.path).join(", ")}
+                    <strong>Context:</strong> ${escapedContext}<br>
+                    <strong>Paths:</strong> ${escapedPaths}
                 </div>
             `;
     } else {
@@ -693,13 +692,14 @@ class DataConnectorConfig {
       this.sentenceFilterConfig.excludedSentences.length > 0
     ) {
       const filterCount = this.sentenceFilterConfig.excludedSentences.length;
+      const escapedFilters = this.sentenceFilterConfig.excludedSentences.map((s) => this.escapeHtml(s)).join(", ");
       statusHtml += `
                 <div class="status-item">
                     <strong>Sentence Filter:</strong> ${filterCount} sentence(s) excluded
                     <span class="status-indicator success">✓ Configured</span>
                 </div>
                 <div class="status-details">
-                    <strong>Excluded:</strong> ${this.sentenceFilterConfig.excludedSentences.join(", ")}
+                    <strong>Excluded:</strong> ${escapedFilters}
                 </div>
             `;
     } else {
