@@ -6,6 +6,7 @@ const DELTA_TIMER_MIN = 100;
 const DELTA_TIMER_MAX = 10000;
 const NOTIFICATION_TIMEOUT = 4000;
 const METRICS_REFRESH_INTERVAL = 15000; // 15 seconds (optimized from 5s to reduce server load)
+const JSON_SYNC_DEBOUNCE = 300; // Debounce delay for JSON editor sync
 
 // HTML Template Helpers
 const renderCard = (title, subtitle, contentId, contentClass = "") => `
@@ -52,6 +53,7 @@ class DataConnectorConfig {
     this.sentenceFilterConfig = null;
     this.isServerMode = false;
     this.metricsInterval = null;
+    this.syncTimeout = null;
     this.init();
   }
 
@@ -130,9 +132,14 @@ class DataConnectorConfig {
       this.addPathItem();
     });
 
-    // JSON editor sync
+    // JSON editor sync (debounced to avoid rebuilding form on every keystroke)
     document.getElementById("subscriptionJson").addEventListener("input", () => {
-      this.syncFromJson();
+      if (this.syncTimeout) {
+        clearTimeout(this.syncTimeout);
+      }
+      this.syncTimeout = setTimeout(() => {
+        this.syncFromJson();
+      }, JSON_SYNC_DEBOUNCE);
     });
 
     // Context input change
@@ -768,15 +775,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // Clean up metrics refresh interval when page is hidden or unloaded
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && window.dataConnectorConfig && window.dataConnectorConfig.metricsInterval) {
-    clearInterval(window.dataConnectorConfig.metricsInterval);
-    window.dataConnectorConfig.metricsInterval = null;
-  } else if (
-    !document.hidden &&
-    window.dataConnectorConfig &&
-    !window.dataConnectorConfig.metricsInterval
-  ) {
-    // Restart metrics refresh when page becomes visible again
+  if (!window.dataConnectorConfig) {
+    return;
+  }
+
+  if (document.hidden) {
+    // Stop refreshing when page is hidden
+    if (window.dataConnectorConfig.metricsInterval) {
+      clearInterval(window.dataConnectorConfig.metricsInterval);
+      window.dataConnectorConfig.metricsInterval = null;
+    }
+  } else if (!window.dataConnectorConfig.metricsInterval) {
+    // Load metrics immediately and restart refresh when page becomes visible
+    window.dataConnectorConfig.loadMetrics();
     window.dataConnectorConfig.startMetricsRefresh();
   }
 });
