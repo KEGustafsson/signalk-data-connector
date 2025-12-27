@@ -412,8 +412,8 @@ function encodeDelta(delta) {
       $source: update.$source,
       values: update.values
         ? update.values.map((value) =>
-            value.path ? { ...value, path: encodePath(value.path) } : { ...value }
-          )
+          value.path ? { ...value, path: encodePath(value.path) } : { ...value }
+        )
         : update.values
     }))
   };
@@ -440,8 +440,8 @@ function decodeDelta(delta) {
       $source: update.$source,
       values: update.values
         ? update.values.map((value) =>
-            value.path !== undefined ? { ...value, path: decodePath(value.path) } : { ...value }
-          )
+          value.path !== undefined ? { ...value, path: decodePath(value.path) } : { ...value }
+        )
         : update.values
     }))
   };

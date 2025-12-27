@@ -1,5 +1,4 @@
 "use strict";
-/* eslint-disable no-undef */
 const { access, readFile, writeFile } = require("fs").promises;
 const { watch } = require("fs");
 const { join } = require("path");
@@ -85,10 +84,7 @@ module.exports = function createPlugin(app) {
   let subscriptionFile;
   let sentenceFilterFile;
 
-  // File system watchers for configuration files
-  let deltaTimerWatcher;
-  let subscriptionWatcher;
-  let sentenceFilterWatcher;
+  // Debounce timers for configuration file changes
   let deltaTimerDebounceTimer;
   let subscriptionDebounceTimer;
   let sentenceFilterDebounceTimer;
@@ -175,17 +171,119 @@ module.exports = function createPlugin(app) {
   }
 
   /**
-   * Cleanup old rate limit entries periodically
+   * Publishes RTT (Round Trip Time) to local SignalK
+   * @param {number} rttMs - RTT in milliseconds
    */
-  // eslint-disable-next-line prefer-const
-  rateLimitCleanupInterval = setInterval(() => {
-    const now = Date.now();
-    for (const [ip, data] of rateLimitMap.entries()) {
-      if (now > data.resetTime) {
-        rateLimitMap.delete(ip);
-      }
+  function publishRtt(rttMs) {
+    const rttDelta = {
+      context: "vessels.self",
+      updates: [
+        {
+          timestamp: new Date(),
+          values: [
+            {
+              path: "networking.modem.rtt",
+              value: rttMs / 1000 // Convert ms to seconds for SignalK
+            }
+          ]
+        }
+      ]
+    };
+    app.handleMessage(plugin.id, rttDelta);
+  }
+
+  /**
+   * Resets all metrics to initial state
+   * Used during plugin stop for clean restart
+   */
+  function resetMetrics() {
+    metrics.startTime = Date.now();
+    metrics.deltasSent = 0;
+    metrics.deltasReceived = 0;
+    metrics.udpSendErrors = 0;
+    metrics.udpRetries = 0;
+    metrics.compressionErrors = 0;
+    metrics.encryptionErrors = 0;
+    metrics.subscriptionErrors = 0;
+    metrics.lastError = null;
+    metrics.lastErrorTime = null;
+    metrics.bandwidth.bytesOut = 0;
+    metrics.bandwidth.bytesIn = 0;
+    metrics.bandwidth.bytesOutRaw = 0;
+    metrics.bandwidth.bytesInRaw = 0;
+    metrics.bandwidth.packetsOut = 0;
+    metrics.bandwidth.packetsIn = 0;
+    metrics.bandwidth.lastBytesOut = 0;
+    metrics.bandwidth.lastBytesIn = 0;
+    metrics.bandwidth.lastRateCalcTime = Date.now();
+    metrics.bandwidth.rateOut = 0;
+    metrics.bandwidth.rateIn = 0;
+    metrics.bandwidth.compressionRatio = 0;
+    metrics.bandwidth.history = new CircularBuffer(BANDWIDTH_HISTORY_MAX);
+    metrics.pathStats.clear();
+  }
+
+  /**
+   * Handles successful ping response (used by 'up' and 'restored' events)
+   * @param {Object} res - Ping response object
+   * @param {string} eventName - Event name for logging ('up' or 'restored')
+   * @param {number} pingIntervalTime - Ping interval in minutes
+   */
+  function handlePingSuccess(res, eventName, pingIntervalTime) {
+    readyToSend = true;
+    clearTimeout(pingTimeout);
+    pingTimeout = setTimeout(
+      () => {
+        readyToSend = false;
+      },
+      pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
+    );
+    // Publish ping RTT (Round Trip Time) to local SignalK
+    if (res && res.time !== undefined) {
+      publishRtt(res.time);
+      app.debug(`Connection monitor: ${eventName} (RTT: ${res.time}ms)`);
+    } else {
+      app.debug(`Connection monitor: ${eventName}`);
     }
-  }, RATE_LIMIT_WINDOW);
+  }
+
+  /**
+   * Starts the rate limit cleanup interval
+   * Called during plugin.start() to align with plugin lifecycle
+   */
+  function startRateLimitCleanup() {
+    if (rateLimitCleanupInterval) {
+      clearInterval(rateLimitCleanupInterval);
+    }
+    rateLimitCleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [ip, data] of rateLimitMap.entries()) {
+        if (now > data.resetTime) {
+          rateLimitMap.delete(ip);
+        }
+      }
+    }, RATE_LIMIT_WINDOW);
+  }
+
+  // Valid configuration filenames
+  const VALID_CONFIG_FILES = ["delta_timer.json", "subscription.json", "sentence_filter.json"];
+
+  /**
+   * Resolves a config filename to its full file path
+   * @param {string} filename - Config filename (e.g., "delta_timer.json")
+   * @returns {string|null} Full file path or null if invalid filename
+   */
+  function getConfigFilePath(filename) {
+    if (!VALID_CONFIG_FILES.includes(filename)) {
+      return null;
+    }
+    const fileMap = {
+      "delta_timer.json": deltaTimerFile,
+      "subscription.json": subscriptionFile,
+      "sentence_filter.json": sentenceFilterFile
+    };
+    return fileMap[filename];
+  }
 
   /**
    * Loads a configuration file from persistent storage
@@ -329,9 +427,9 @@ module.exports = function createPlugin(app) {
         const localSubscriptionNew = content
           ? JSON.parse(content)
           : {
-              context: "*",
-              subscribe: [{ path: "*" }]
-            };
+            context: "*",
+            subscribe: [{ path: "*" }]
+          };
 
         // Use content hashing instead of JSON.stringify comparison
         const configString = JSON.stringify(localSubscriptionNew);
@@ -446,6 +544,71 @@ module.exports = function createPlugin(app) {
     }, FILE_WATCH_DEBOUNCE_DELAY);
   }
 
+  // Watcher recovery delay in milliseconds
+  const WATCHER_RECOVERY_DELAY = 5000;
+
+  /**
+   * Creates a file watcher with automatic recovery on error
+   * @param {string} filePath - Path to the file to watch
+   * @param {Function} onChange - Callback function when file changes
+   * @param {string} name - Human-readable name for logging
+   * @returns {Object} Object with watcher property and close method
+   */
+  function createWatcherWithRecovery(filePath, onChange, name) {
+    const watcherObj = { watcher: null };
+
+    function createWatcher() {
+      try {
+        watcherObj.watcher = watch(filePath, (eventType) => {
+          if (eventType === "change") {
+            app.debug(`${name} configuration file changed`);
+            onChange();
+          }
+        });
+
+        watcherObj.watcher.on("error", (error) => {
+          app.error(`${name} watcher error: ${error.message}`);
+          if (watcherObj.watcher) {
+            watcherObj.watcher.close();
+            watcherObj.watcher = null;
+          }
+          // Attempt to recreate watcher after delay
+          setTimeout(() => {
+            app.debug(`Attempting to recreate ${name} watcher...`);
+            createWatcher();
+            if (watcherObj.watcher) {
+              app.debug(`${name} watcher recreated successfully`);
+            }
+          }, WATCHER_RECOVERY_DELAY);
+        });
+
+        return true;
+      } catch (err) {
+        app.error(`Failed to create ${name} watcher: ${err.message}`);
+        return false;
+      }
+    }
+
+    createWatcher();
+
+    return {
+      get watcher() {
+        return watcherObj.watcher;
+      },
+      close() {
+        if (watcherObj.watcher) {
+          watcherObj.watcher.close();
+          watcherObj.watcher = null;
+        }
+      }
+    };
+  }
+
+  // Store watcher objects for cleanup
+  let deltaTimerWatcherObj = null;
+  let subscriptionWatcherObj = null;
+  let sentenceFilterWatcherObj = null;
+
   /**
    * Sets up file system watchers for configuration files
    * Uses fs.watch for efficient event-driven configuration reloading
@@ -454,108 +617,25 @@ module.exports = function createPlugin(app) {
   function setupConfigWatchers() {
     try {
       // Watch delta_timer.json for changes
-      deltaTimerWatcher = watch(deltaTimerFile, (eventType) => {
-        if (eventType === "change") {
-          app.debug("Delta timer configuration file changed");
-          handleDeltaTimerChange();
-        }
-      });
-
-      deltaTimerWatcher.on("error", (error) => {
-        app.error(`Delta timer watcher error: ${error.message}`);
-        // Close the failed watcher
-        if (deltaTimerWatcher) {
-          deltaTimerWatcher.close();
-          deltaTimerWatcher = null;
-        }
-        // Attempt to recreate watcher after delay
-        setTimeout(() => {
-          app.debug("Attempting to recreate delta timer watcher...");
-          try {
-            deltaTimerWatcher = watch(deltaTimerFile, (eventType) => {
-              if (eventType === "change") {
-                app.debug("Delta timer configuration file changed");
-                handleDeltaTimerChange();
-              }
-            });
-            deltaTimerWatcher.on("error", (err) => {
-              app.error(`Delta timer watcher error after recovery: ${err.message}`);
-            });
-            app.debug("Delta timer watcher recreated successfully");
-          } catch (err) {
-            app.error(`Failed to recreate delta timer watcher: ${err.message}`);
-          }
-        }, 5000);
-      });
+      deltaTimerWatcherObj = createWatcherWithRecovery(
+        deltaTimerFile,
+        handleDeltaTimerChange,
+        "Delta timer"
+      );
 
       // Watch subscription.json for changes
-      subscriptionWatcher = watch(subscriptionFile, (eventType) => {
-        if (eventType === "change") {
-          app.debug("Subscription configuration file changed");
-          handleSubscriptionChange();
-        }
-      });
-
-      subscriptionWatcher.on("error", (error) => {
-        app.error(`Subscription watcher error: ${error.message}`);
-        // Close the failed watcher
-        if (subscriptionWatcher) {
-          subscriptionWatcher.close();
-          subscriptionWatcher = null;
-        }
-        // Attempt to recreate watcher after delay
-        setTimeout(() => {
-          app.debug("Attempting to recreate subscription watcher...");
-          try {
-            subscriptionWatcher = watch(subscriptionFile, (eventType) => {
-              if (eventType === "change") {
-                app.debug("Subscription configuration file changed");
-                handleSubscriptionChange();
-              }
-            });
-            subscriptionWatcher.on("error", (err) => {
-              app.error(`Subscription watcher error after recovery: ${err.message}`);
-            });
-            app.debug("Subscription watcher recreated successfully");
-          } catch (err) {
-            app.error(`Failed to recreate subscription watcher: ${err.message}`);
-          }
-        }, 5000);
-      });
+      subscriptionWatcherObj = createWatcherWithRecovery(
+        subscriptionFile,
+        handleSubscriptionChange,
+        "Subscription"
+      );
 
       // Watch sentence_filter.json for changes
-      sentenceFilterWatcher = watch(sentenceFilterFile, (eventType) => {
-        if (eventType === "change") {
-          app.debug("Sentence filter configuration file changed");
-          handleSentenceFilterChange();
-        }
-      });
-
-      sentenceFilterWatcher.on("error", (error) => {
-        app.error(`Sentence filter watcher error: ${error.message}`);
-        if (sentenceFilterWatcher) {
-          sentenceFilterWatcher.close();
-          sentenceFilterWatcher = null;
-        }
-        // Attempt to recreate watcher after delay
-        setTimeout(() => {
-          app.debug("Attempting to recreate sentence filter watcher...");
-          try {
-            sentenceFilterWatcher = watch(sentenceFilterFile, (eventType) => {
-              if (eventType === "change") {
-                app.debug("Sentence filter configuration file changed");
-                handleSentenceFilterChange();
-              }
-            });
-            sentenceFilterWatcher.on("error", (err) => {
-              app.error(`Sentence filter watcher error after recovery: ${err.message}`);
-            });
-            app.debug("Sentence filter watcher recreated successfully");
-          } catch (err) {
-            app.error(`Failed to recreate sentence filter watcher: ${err.message}`);
-          }
-        }, 5000);
-      });
+      sentenceFilterWatcherObj = createWatcherWithRecovery(
+        sentenceFilterFile,
+        handleSentenceFilterChange,
+        "Sentence filter"
+      );
 
       // Load initial subscription configuration
       handleSubscriptionChange();
@@ -697,13 +777,19 @@ module.exports = function createPlugin(app) {
 
   // Register web routes - needs to be defined before start() is called
   plugin.registerWithRouter = (router) => {
-    // Metrics endpoint (available in both client and server mode)
-    router.get("/metrics", (req, res) => {
-      // Rate limiting
+    /**
+     * Rate limiting middleware for API endpoints
+     */
+    const rateLimitMiddleware = (req, res, next) => {
       const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
       if (!checkRateLimit(clientIp)) {
         return res.status(429).json({ error: "Too many requests, please try again later" });
       }
+      next();
+    };
+
+    // Metrics endpoint (available in both client and server mode)
+    router.get("/metrics", rateLimitMiddleware, (req, res) => {
 
       // Update rates before responding
       updateBandwidthRates();
@@ -742,45 +828,40 @@ module.exports = function createPlugin(app) {
           readyToSend: readyToSend,
           deltasBuffered: deltas.length
         },
-        bandwidth: {
-          bytesOut: metrics.bandwidth.bytesOut,
-          bytesIn: metrics.bandwidth.bytesIn,
-          bytesOutRaw: metrics.bandwidth.bytesOutRaw,
-          bytesInRaw: metrics.bandwidth.bytesInRaw,
-          bytesOutFormatted: formatBytes(metrics.bandwidth.bytesOut),
-          bytesInFormatted: formatBytes(metrics.bandwidth.bytesIn),
-          bytesOutRawFormatted: formatBytes(metrics.bandwidth.bytesOutRaw),
-          packetsOut: metrics.bandwidth.packetsOut,
-          packetsIn: metrics.bandwidth.packetsIn,
-          rateOut: metrics.bandwidth.rateOut,
-          rateIn: metrics.bandwidth.rateIn,
-          rateOutFormatted: formatBytes(metrics.bandwidth.rateOut) + "/s",
-          rateInFormatted: formatBytes(metrics.bandwidth.rateIn) + "/s",
-          compressionRatio: metrics.bandwidth.compressionRatio,
-          avgPacketSize: isServerMode
-            ? metrics.bandwidth.packetsIn > 0
-              ? Math.round(metrics.bandwidth.bytesIn / metrics.bandwidth.packetsIn)
-              : 0
-            : metrics.bandwidth.packetsOut > 0
-              ? Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut)
-              : 0,
-          avgPacketSizeFormatted: isServerMode
-            ? metrics.bandwidth.packetsIn > 0
-              ? formatBytes(Math.round(metrics.bandwidth.bytesIn / metrics.bandwidth.packetsIn))
-              : "0 B"
-            : metrics.bandwidth.packetsOut > 0
-              ? formatBytes(Math.round(metrics.bandwidth.bytesOut / metrics.bandwidth.packetsOut))
-              : "0 B",
-          history: metrics.bandwidth.history.toArray().slice(-30) // Last 30 data points for chart
-        },
+        bandwidth: (() => {
+          // Calculate avgPacketSize once for reuse
+          const packets = isServerMode ? metrics.bandwidth.packetsIn : metrics.bandwidth.packetsOut;
+          const bytes = isServerMode ? metrics.bandwidth.bytesIn : metrics.bandwidth.bytesOut;
+          const avgPacketSize = packets > 0 ? Math.round(bytes / packets) : 0;
+
+          return {
+            bytesOut: metrics.bandwidth.bytesOut,
+            bytesIn: metrics.bandwidth.bytesIn,
+            bytesOutRaw: metrics.bandwidth.bytesOutRaw,
+            bytesInRaw: metrics.bandwidth.bytesInRaw,
+            bytesOutFormatted: formatBytes(metrics.bandwidth.bytesOut),
+            bytesInFormatted: formatBytes(metrics.bandwidth.bytesIn),
+            bytesOutRawFormatted: formatBytes(metrics.bandwidth.bytesOutRaw),
+            packetsOut: metrics.bandwidth.packetsOut,
+            packetsIn: metrics.bandwidth.packetsIn,
+            rateOut: metrics.bandwidth.rateOut,
+            rateIn: metrics.bandwidth.rateIn,
+            rateOutFormatted: formatBytes(metrics.bandwidth.rateOut) + "/s",
+            rateInFormatted: formatBytes(metrics.bandwidth.rateIn) + "/s",
+            compressionRatio: metrics.bandwidth.compressionRatio,
+            avgPacketSize,
+            avgPacketSizeFormatted: avgPacketSize > 0 ? formatBytes(avgPacketSize) : "0 B",
+            history: metrics.bandwidth.history.toArray().slice(-30) // Last 30 data points for chart
+          };
+        })(),
         pathStats: pathStatsArray,
         pathCategories: PATH_CATEGORIES,
         lastError: metrics.lastError
           ? {
-              message: metrics.lastError,
-              timestamp: metrics.lastErrorTime,
-              timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
-            }
+            message: metrics.lastError,
+            timestamp: metrics.lastErrorTime,
+            timeAgo: metrics.lastErrorTime ? Date.now() - metrics.lastErrorTime : null
+          }
           : null
       };
 
@@ -788,13 +869,7 @@ module.exports = function createPlugin(app) {
     });
 
     // Signal K paths dictionary endpoint
-    router.get("/paths", (req, res) => {
-      // Rate limiting
-      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
-      if (!checkRateLimit(clientIp)) {
-        return res.status(429).json({ error: "Too many requests, please try again later" });
-      }
-
+    router.get("/paths", rateLimitMiddleware, (req, res) => {
       const paths = getAllPaths();
       const categorized = {};
 
@@ -811,78 +886,43 @@ module.exports = function createPlugin(app) {
       });
     });
 
-    // Config routes (only available in client mode)
-    router.get("/config/:filename", async (req, res) => {
-      // Rate limiting
-      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
-      if (!checkRateLimit(clientIp)) {
-        return res.status(429).json({ error: "Too many requests, please try again later" });
-      }
-
-      // Check if running in server mode
+    /**
+     * Middleware to check client mode and storage initialization
+     */
+    const clientModeMiddleware = (req, res, next) => {
       if (isServerMode) {
         return res.status(404).json({ error: "Not available in server mode" });
       }
-
-      // Check if persistent storage has been initialized
       if (!deltaTimerFile || !subscriptionFile) {
         return res.status(503).json({ error: "Plugin not fully initialized" });
       }
+      next();
+    };
 
-      const filename = req.params.filename;
-      if (!["delta_timer.json", "subscription.json", "sentence_filter.json"].includes(filename)) {
+    // Config routes (only available in client mode)
+    router.get("/config/:filename", rateLimitMiddleware, clientModeMiddleware, async (req, res) => {
+      const filePath = getConfigFilePath(req.params.filename);
+      if (!filePath) {
         return res.status(400).json({ error: "Invalid filename" });
       }
 
-      let filePath;
-      if (filename === "delta_timer.json") {
-        filePath = deltaTimerFile;
-      } else if (filename === "subscription.json") {
-        filePath = subscriptionFile;
-      } else {
-        filePath = sentenceFilterFile;
-      }
       res.contentType("application/json");
       const config = await loadConfigFile(filePath);
       res.send(JSON.stringify(config || {}));
     });
 
-    router.post("/config/:filename", async (req, res) => {
-      // Rate limiting
-      const clientIp = req.ip || (req.connection && req.connection.remoteAddress) || "unknown";
-      if (!checkRateLimit(clientIp)) {
-        return res.status(429).json({ error: "Too many requests, please try again later" });
-      }
-
+    router.post("/config/:filename", rateLimitMiddleware, clientModeMiddleware, async (req, res) => {
       // Validate Content-Type
       const contentType = req.headers["content-type"];
       if (!contentType || !contentType.includes("application/json")) {
         return res.status(415).json({ error: "Content-Type must be application/json" });
       }
 
-      // Check if running in server mode
-      if (isServerMode) {
-        return res.status(404).json({ error: "Not available in server mode" });
-      }
-
-      // Check if persistent storage has been initialized
-      if (!deltaTimerFile || !subscriptionFile) {
-        return res.status(503).json({ error: "Plugin not fully initialized" });
-      }
-
-      const filename = req.params.filename;
-      if (!["delta_timer.json", "subscription.json", "sentence_filter.json"].includes(filename)) {
+      const filePath = getConfigFilePath(req.params.filename);
+      if (!filePath) {
         return res.status(400).json({ error: "Invalid filename" });
       }
 
-      let filePath;
-      if (filename === "delta_timer.json") {
-        filePath = deltaTimerFile;
-      } else if (filename === "subscription.json") {
-        filePath = subscriptionFile;
-      } else {
-        filePath = sentenceFilterFile;
-      }
       const success = await saveConfigFile(filePath, req.body);
       if (success) {
         res.status(200).send("OK");
@@ -895,6 +935,9 @@ module.exports = function createPlugin(app) {
   plugin.start = async function (options) {
     // Store options for access in event handlers
     pluginOptions = options;
+
+    // Start rate limit cleanup interval (aligned with plugin lifecycle)
+    startRateLimitCleanup();
 
     // Validate required options
     try {
@@ -974,7 +1017,7 @@ module.exports = function createPlugin(app) {
             context: "vessels.urn:mrn:imo:mmsi:" + app.getSelfPath("mmsi"),
             updates: [
               {
-                timestamp: new Date(Date.now()),
+                timestamp: new Date(),
                 values: []
               }
             ]
@@ -1012,35 +1055,7 @@ module.exports = function createPlugin(app) {
       });
 
       pingMonitor.on("up", function (res, _state) {
-        readyToSend = true;
-        clearTimeout(pingTimeout);
-        pingTimeout = setTimeout(
-          () => {
-            readyToSend = false;
-          },
-          options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
-        );
-        // Publish ping RTT (Round Trip Time) to local SignalK
-        if (res && res.time !== undefined) {
-          const rttDelta = {
-            context: "vessels.self",
-            updates: [
-              {
-                timestamp: new Date(),
-                values: [
-                  {
-                    path: "networking.modem.rtt",
-                    value: res.time / 1000 // Convert ms to seconds for SignalK
-                  }
-                ]
-              }
-            ]
-          };
-          app.handleMessage(plugin.id, rttDelta);
-          app.debug(`Connection monitor: up (RTT: ${res.time}ms)`);
-        } else {
-          app.debug("Connection monitor: up");
-        }
+        handlePingSuccess(res, "up", options.pingIntervalTime);
       });
 
       pingMonitor.on("down", function (_res, _state) {
@@ -1049,35 +1064,7 @@ module.exports = function createPlugin(app) {
       });
 
       pingMonitor.on("restored", function (res, _state) {
-        readyToSend = true;
-        clearTimeout(pingTimeout);
-        pingTimeout = setTimeout(
-          () => {
-            readyToSend = false;
-          },
-          options.pingIntervalTime * MILLISECONDS_PER_MINUTE + PING_TIMEOUT_BUFFER
-        );
-        // Publish ping RTT (Round Trip Time) to local SignalK
-        if (res && res.time !== undefined) {
-          const rttDelta = {
-            context: "vessels.self",
-            updates: [
-              {
-                timestamp: new Date(),
-                values: [
-                  {
-                    path: "networking.modem.rtt",
-                    value: res.time / 1000 // Convert ms to seconds for SignalK
-                  }
-                ]
-              }
-            ]
-          };
-          app.handleMessage(plugin.id, rttDelta);
-          app.debug(`Connection monitor: restored (RTT: ${res.time}ms)`);
-        } else {
-          app.debug("Connection monitor: restored");
-        }
+        handlePingSuccess(res, "restored", options.pingIntervalTime);
       });
 
       pingMonitor.on("stop", function (_res, _state) {
@@ -1257,15 +1244,16 @@ module.exports = function createPlugin(app) {
         jsonContent = JSON.parse(decompressed.toString());
       }
 
-      // Process deltas
-      const deltaCount = Object.keys(jsonContent).length;
+      // Process deltas - cache keys array to avoid repeated Object.keys() calls
+      const deltaKeys = Object.keys(jsonContent);
+      const deltaCount = deltaKeys.length;
 
       for (let i = 0; i < deltaCount; i++) {
-        const jsonKey = Object.keys(jsonContent)[i];
+        const jsonKey = deltaKeys[i];
         let deltaMessage = jsonContent[jsonKey];
 
         // Skip null or undefined delta messages
-        if (deltaMessage == null) {
+        if (deltaMessage === null || deltaMessage === undefined) {
           app.debug(`Skipping null delta message at index ${i}`);
           continue;
         }
@@ -1285,7 +1273,7 @@ module.exports = function createPlugin(app) {
         }
 
         // Skip if decoding returned null
-        if (deltaMessage == null) {
+        if (deltaMessage === null || deltaMessage === undefined) {
           app.debug(`Skipping null delta message after decoding at index ${i}`);
           continue;
         }
@@ -1388,30 +1376,7 @@ module.exports = function createPlugin(app) {
     lastPacketTime = 0;
 
     // Reset metrics for fresh start
-    metrics.startTime = Date.now();
-    metrics.deltasSent = 0;
-    metrics.deltasReceived = 0;
-    metrics.udpSendErrors = 0;
-    metrics.udpRetries = 0;
-    metrics.compressionErrors = 0;
-    metrics.encryptionErrors = 0;
-    metrics.subscriptionErrors = 0;
-    metrics.lastError = null;
-    metrics.lastErrorTime = null;
-    metrics.bandwidth.bytesOut = 0;
-    metrics.bandwidth.bytesIn = 0;
-    metrics.bandwidth.bytesOutRaw = 0;
-    metrics.bandwidth.bytesInRaw = 0;
-    metrics.bandwidth.packetsOut = 0;
-    metrics.bandwidth.packetsIn = 0;
-    metrics.bandwidth.lastBytesOut = 0;
-    metrics.bandwidth.lastBytesIn = 0;
-    metrics.bandwidth.lastRateCalcTime = Date.now();
-    metrics.bandwidth.rateOut = 0;
-    metrics.bandwidth.rateIn = 0;
-    metrics.bandwidth.compressionRatio = 0;
-    metrics.bandwidth.history = new CircularBuffer(BANDWIDTH_HISTORY_MAX);
-    metrics.pathStats.clear();
+    resetMetrics();
 
     // Clear rate limit map
     rateLimitMap.clear();
@@ -1426,19 +1391,19 @@ module.exports = function createPlugin(app) {
     clearTimeout(sentenceFilterDebounceTimer);
 
     // Stop file system watchers
-    if (deltaTimerWatcher) {
-      deltaTimerWatcher.close();
-      deltaTimerWatcher = null;
+    if (deltaTimerWatcherObj) {
+      deltaTimerWatcherObj.close();
+      deltaTimerWatcherObj = null;
       app.debug("Delta timer file watcher closed");
     }
-    if (subscriptionWatcher) {
-      subscriptionWatcher.close();
-      subscriptionWatcher = null;
+    if (subscriptionWatcherObj) {
+      subscriptionWatcherObj.close();
+      subscriptionWatcherObj = null;
       app.debug("Subscription file watcher closed");
     }
-    if (sentenceFilterWatcher) {
-      sentenceFilterWatcher.close();
-      sentenceFilterWatcher = null;
+    if (sentenceFilterWatcherObj) {
+      sentenceFilterWatcherObj.close();
+      sentenceFilterWatcherObj = null;
       app.debug("Sentence filter file watcher closed");
     }
 
@@ -1554,13 +1519,6 @@ module.exports = function createPlugin(app) {
         title: "Use Path Dictionary Encoding",
         description:
           "Replace common SignalK paths with short numeric IDs. Provides 10-20% bandwidth reduction. Both client and server must use the same setting.",
-        default: false
-      },
-      useHmac: {
-        type: "boolean",
-        title: "Use HMAC Authentication",
-        description:
-          "Add HMAC-SHA256 signature for message integrity verification. Detects tampering and wrong keys. Adds 32 bytes per packet. Both client and server must use the same setting.",
         default: false
       }
     },

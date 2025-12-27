@@ -364,23 +364,61 @@ describe("SignalK Data Connector Plugin", () => {
     let mockRouter;
     let getHandler;
     let postHandler;
+    let getMiddlewares;
+    let postMiddlewares;
 
     beforeEach(() => {
       mockRouter = {
-        get: jest.fn((path, handler) => {
+        get: jest.fn((path, ...handlers) => {
           if (path === "/config/:filename") {
-            getHandler = handler;
+            // Last handler is the actual route handler, others are middlewares
+            getHandler = handlers[handlers.length - 1];
+            getMiddlewares = handlers.slice(0, -1);
           }
         }),
-        post: jest.fn((path, handler) => {
+        post: jest.fn((path, ...handlers) => {
           if (path === "/config/:filename") {
-            postHandler = handler;
+            // Last handler is the actual route handler, others are middlewares
+            postHandler = handlers[handlers.length - 1];
+            postMiddlewares = handlers.slice(0, -1);
           }
         })
       };
 
       plugin.registerWithRouter(mockRouter);
     });
+
+    /**
+     * Helper to run middlewares in sequence, then the handler
+     * Properly chains middlewares and only calls the final handler if all middlewares pass
+     */
+    function runWithMiddlewares(middlewares, handler, req, res) {
+      return new Promise((resolve) => {
+        let currentIndex = 0;
+
+        const next = () => {
+          currentIndex++;
+          if (currentIndex < middlewares.length) {
+            // Run next middleware
+            middlewares[currentIndex](req, res, next);
+          } else {
+            // All middlewares passed, run the handler
+            Promise.resolve(handler(req, res)).then(resolve);
+          }
+        };
+
+        if (middlewares.length > 0) {
+          // Start with first middleware
+          middlewares[0](req, res, next);
+        } else {
+          // No middlewares, just run handler
+          Promise.resolve(handler(req, res)).then(resolve);
+        }
+
+        // Give time for sync responses (if middleware doesn't call next)
+        setTimeout(resolve, 10);
+      });
+    }
 
     test("should check initialization before validating filename on GET", async () => {
       const mockReq = { params: { filename: "invalid.json" } };
@@ -391,7 +429,7 @@ describe("SignalK Data Connector Plugin", () => {
         send: jest.fn()
       };
 
-      await getHandler(mockReq, mockRes);
+      await runWithMiddlewares(getMiddlewares, getHandler, mockReq, mockRes);
 
       // Should return 503 (not initialized) before checking filename
       expect(mockRes.status).toHaveBeenCalledWith(503);
@@ -412,7 +450,7 @@ describe("SignalK Data Connector Plugin", () => {
         send: jest.fn()
       };
 
-      await postHandler(mockReq, mockRes);
+      await runWithMiddlewares(postMiddlewares, postHandler, mockReq, mockRes);
 
       // Should return 503 (not initialized) before checking filename
       expect(mockRes.status).toHaveBeenCalledWith(503);
@@ -431,7 +469,7 @@ describe("SignalK Data Connector Plugin", () => {
       };
 
       // This will fail because storage isn't initialized, but shouldn't reject filename
-      await getHandler(mockReq, mockRes);
+      await runWithMiddlewares(getMiddlewares, getHandler, mockReq, mockRes);
 
       expect(mockRes.status).not.toHaveBeenCalledWith(400);
     });
@@ -446,7 +484,7 @@ describe("SignalK Data Connector Plugin", () => {
       };
 
       // This will fail because storage isn't initialized, but shouldn't reject filename
-      await getHandler(mockReq, mockRes);
+      await runWithMiddlewares(getMiddlewares, getHandler, mockReq, mockRes);
 
       expect(mockRes.status).not.toHaveBeenCalledWith(400);
     });

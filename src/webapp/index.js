@@ -462,17 +462,17 @@ class DataConnectorConfig {
     // Build bandwidth stats based on mode
     const bandwidthStats = isClient
       ? [
-          renderBwStat("Total Sent (Compressed)", bw.bytesOutFormatted),
-          renderBwStat("Total Raw (Before Compression)", bw.bytesOutRawFormatted),
-          renderBwStat("Bandwidth Saved", savedFormatted, true, true),
-          renderBwStat("Packets Sent", bw.packetsOut.toLocaleString())
-        ]
+        renderBwStat("Total Sent (Compressed)", bw.bytesOutFormatted),
+        renderBwStat("Total Raw (Before Compression)", bw.bytesOutRawFormatted),
+        renderBwStat("Bandwidth Saved", savedFormatted, true, true),
+        renderBwStat("Packets Sent", bw.packetsOut.toLocaleString())
+      ]
       : [
-          renderBwStat("Total Received (Compressed)", bw.bytesInFormatted),
-          renderBwStat("Total Raw (After Decompression)", this.formatBytes(bw.bytesInRaw || 0)),
-          renderBwStat("Bandwidth Saved", savedFormatted, true, true),
-          renderBwStat("Packets Received", bw.packetsIn.toLocaleString())
-        ];
+        renderBwStat("Total Received (Compressed)", bw.bytesInFormatted),
+        renderBwStat("Total Raw (After Decompression)", this.formatBytes(bw.bytesInRaw || 0)),
+        renderBwStat("Bandwidth Saved", savedFormatted, true, true),
+        renderBwStat("Packets Received", bw.packetsIn.toLocaleString())
+      ];
 
     const bandwidthHtml = `
       <div class="bandwidth-dashboard">
