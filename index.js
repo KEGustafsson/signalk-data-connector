@@ -1487,27 +1487,29 @@ module.exports = function createPlugin(app) {
     }
   };
 
-  plugin.schema = {
-    type: "object",
-    title: "SignalK Data Connector Configuration",
-    description:
-      "Configure encrypted UDP data transmission between SignalK units with compression and connectivity monitoring",
-    required: ["udpPort", "secretKey"],
-    properties: {
+// Dynamic schema function - returns different schema based on current configuration
+  // Server mode shows only server-relevant settings, client mode shows client-relevant settings
+  plugin.schema = function (existingConfig) {
+    const isServer = existingConfig?.serverType === "server";
+
+    // Common properties for both modes
+    const commonProperties = {
       serverType: {
         type: "string",
         default: "client",
         title: "Operation Mode",
-        description:
-          "Select the operation mode for this plugin instance. Server mode receives and processes data from clients. Client mode sends data to a server.",
+        description: isServer
+          ? "Currently in SERVER mode - receiving and processing data from clients."
+          : "Currently in CLIENT mode - sending data to a server.",
         enum: ["server", "client"],
         enumNames: ["Server Mode - Receive Data", "Client Mode - Send Data"]
       },
       udpPort: {
         type: "number",
         title: "UDP Port Number",
-        description:
-          "The UDP port used for data transmission. Both server and client must use the same port number.",
+        description: isServer
+          ? "The UDP port to listen on for incoming data from clients."
+          : "The UDP port to send data to on the server.",
         default: 4446,
         minimum: 1024,
         maximum: 65535,
@@ -1517,61 +1519,11 @@ module.exports = function createPlugin(app) {
         type: "string",
         title: "Encryption Secret Key",
         description:
-          "A 32-character secret key used for AES encryption/decryption. Both server and client must use the identical key for secure communication.",
+          "A 32-character secret key used for AES encryption/decryption. Both server and client must use the identical key.",
         minLength: 32,
         maxLength: 32,
         pattern: "^[A-Za-z0-9!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>\\/?]{32}$",
         examples: ["MySecretKey123456789012345678901", "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"]
-      },
-      helloMessageSender: {
-        type: "integer",
-        default: 60,
-        title: "Vessel Data Broadcast Interval",
-        description:
-          "How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds.",
-        minimum: 10,
-        maximum: 3600,
-        examples: [30, 60, 120, 300]
-      },
-      udpAddress: {
-        type: "string",
-        title: "Destination Server Address",
-        description:
-          "IP address or hostname of the SignalK server to send data to. Use the server's network address.",
-        default: "127.0.0.1",
-        pattern:
-          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
-        examples: ["192.168.1.100", "10.0.0.50", "signalk.mydomain.com", "localhost"]
-      },
-      testAddress: {
-        type: "string",
-        title: "Connectivity Test Target",
-        description:
-          "IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service (e.g., router, DNS server, or web server).",
-        default: "127.0.0.1",
-        pattern:
-          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
-        examples: ["8.8.8.8", "192.168.1.1", "google.com", "1.1.1.1"]
-      },
-      testPort: {
-        type: "number",
-        title: "Connectivity Test Port",
-        description:
-          "TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS), 22 (SSH).",
-        default: 80,
-        minimum: 1,
-        maximum: 65535,
-        examples: [80, 443, 53, 22, 8080]
-      },
-      pingIntervalTime: {
-        type: "number",
-        title: "Connectivity Check Interval",
-        description:
-          "How often to test network connectivity (minutes). Data transmission is paused when connectivity fails. Recommended: 1-5 minutes for reliable networks.",
-        default: 1,
-        minimum: 0.1,
-        maximum: 60,
-        examples: [0.5, 1, 2, 5, 10]
       },
       useMsgpack: {
         type: "boolean",
@@ -1587,47 +1539,86 @@ module.exports = function createPlugin(app) {
           "Replace common SignalK paths with short numeric IDs. Provides 10-20% bandwidth reduction. Both client and server must use the same setting.",
         default: false
       }
-    },
-    additionalProperties: false,
-    if: {
-      properties: {
-        serverType: { const: "client" }
+    };
+
+    // Client-only properties
+    const clientProperties = {
+      udpAddress: {
+        type: "string",
+        title: "Destination Server Address",
+        description:
+          "IP address or hostname of the SignalK server to send data to.",
+        default: "127.0.0.1",
+        pattern:
+          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
+        examples: ["192.168.1.100", "10.0.0.50", "signalk.mydomain.com"]
+      },
+      helloMessageSender: {
+        type: "integer",
+        default: 60,
+        title: "Heartbeat Interval (seconds)",
+        description:
+          "How often to send heartbeat messages to maintain the UDP connection. Recommended: 30-300 seconds.",
+        minimum: 10,
+        maximum: 3600,
+        examples: [30, 60, 120, 300]
+      },
+      testAddress: {
+        type: "string",
+        title: "Connectivity Test Target",
+        description:
+          "IP address or hostname to test network connectivity before sending data (e.g., router, DNS server).",
+        default: "127.0.0.1",
+        pattern:
+          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
+        examples: ["8.8.8.8", "192.168.1.1", "google.com", "1.1.1.1"]
+      },
+      testPort: {
+        type: "number",
+        title: "Connectivity Test Port",
+        description:
+          "TCP port to test connectivity. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS).",
+        default: 80,
+        minimum: 1,
+        maximum: 65535,
+        examples: [80, 443, 53, 22]
+      },
+      pingIntervalTime: {
+        type: "number",
+        title: "Connectivity Check Interval (minutes)",
+        description:
+          "How often to test network connectivity. Data transmission pauses when connectivity fails.",
+        default: 1,
+        minimum: 0.1,
+        maximum: 60,
+        examples: [0.5, 1, 2, 5]
       }
-    },
-    then: {
-      required: ["udpPort", "secretKey", "udpAddress", "testAddress", "testPort"],
-      properties: {
-        helloMessageSender: {
-          description:
-            "CLIENT ONLY: How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds."
+    };
+
+    // Build schema based on mode
+    if (isServer) {
+      // Server mode: show only server-relevant settings
+      return {
+        type: "object",
+        title: "SignalK Data Connector - Server Mode",
+        description: "Receive encrypted UDP data from remote SignalK clients.",
+        required: ["udpPort", "secretKey"],
+        properties: commonProperties,
+        additionalProperties: false
+      };
+    } else {
+      // Client mode: show all client settings
+      return {
+        type: "object",
+        title: "SignalK Data Connector - Client Mode",
+        description: "Send encrypted UDP data to a remote SignalK server.",
+        required: ["udpPort", "secretKey", "udpAddress", "testAddress", "testPort"],
+        properties: {
+          ...commonProperties,
+          ...clientProperties
         },
-        udpAddress: {
-          description:
-            "CLIENT ONLY: IP address or hostname of the SignalK server to send data to. Use the server's network address."
-        },
-        testAddress: {
-          description:
-            "CLIENT ONLY: IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service."
-        },
-        testPort: {
-          description:
-            "CLIENT ONLY: TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS)."
-        },
-        pingIntervalTime: {
-          description:
-            "CLIENT ONLY: How often to test network connectivity (minutes). Data transmission is paused when connectivity fails."
-        }
-      }
-    },
-    else: {
-      required: ["udpPort", "secretKey"],
-      properties: {
-        helloMessageSender: false,
-        udpAddress: false,
-        testAddress: false,
-        testPort: false,
-        pingIntervalTime: false
-      }
+        additionalProperties: false
+      };
     }
   };
 

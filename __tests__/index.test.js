@@ -49,39 +49,68 @@ describe("SignalK Data Connector Plugin", () => {
       expect(plugin.description).toContain("encrypted compressed UDP");
     });
 
-    test("should have schema", () => {
+    test("should have schema function", () => {
       expect(plugin.schema).toBeDefined();
-      expect(plugin.schema.type).toBe("object");
+      expect(typeof plugin.schema).toBe("function");
     });
   });
 
   describe("Schema Validation", () => {
-    test("should require udpPort and secretKey", () => {
-      expect(plugin.schema.required).toContain("udpPort");
-      expect(plugin.schema.required).toContain("secretKey");
+    test("should require udpPort and secretKey in client mode", () => {
+      const clientSchema = plugin.schema({ serverType: "client" });
+      expect(clientSchema.required).toContain("udpPort");
+      expect(clientSchema.required).toContain("secretKey");
+    });
+
+    test("should require udpPort and secretKey in server mode", () => {
+      const serverSchema = plugin.schema({ serverType: "server" });
+      expect(serverSchema.required).toContain("udpPort");
+      expect(serverSchema.required).toContain("secretKey");
     });
 
     test("should have serverType options", () => {
-      const serverType = plugin.schema.properties.serverType;
+      const clientSchema = plugin.schema({ serverType: "client" });
+      const serverType = clientSchema.properties.serverType;
       expect(serverType.enum).toEqual(["server", "client"]);
     });
 
     test("should validate udpPort range", () => {
-      const udpPort = plugin.schema.properties.udpPort;
+      const clientSchema = plugin.schema({ serverType: "client" });
+      const udpPort = clientSchema.properties.udpPort;
       expect(udpPort.minimum).toBe(1024);
       expect(udpPort.maximum).toBe(65535);
     });
 
     test("should validate secretKey length", () => {
-      const secretKey = plugin.schema.properties.secretKey;
+      const clientSchema = plugin.schema({ serverType: "client" });
+      const secretKey = clientSchema.properties.secretKey;
       expect(secretKey.minLength).toBe(32);
       expect(secretKey.maxLength).toBe(32);
     });
 
-    test("should have conditional client-only fields", () => {
-      expect(plugin.schema.if).toBeDefined();
-      expect(plugin.schema.then).toBeDefined();
-      expect(plugin.schema.else).toBeDefined();
+    test("should show client-only fields in client mode", () => {
+      const clientSchema = plugin.schema({ serverType: "client" });
+      expect(clientSchema.properties.udpAddress).toBeDefined();
+      expect(clientSchema.properties.testAddress).toBeDefined();
+      expect(clientSchema.properties.testPort).toBeDefined();
+      expect(clientSchema.properties.pingIntervalTime).toBeDefined();
+      expect(clientSchema.properties.helloMessageSender).toBeDefined();
+    });
+
+    test("should hide client-only fields in server mode", () => {
+      const serverSchema = plugin.schema({ serverType: "server" });
+      expect(serverSchema.properties.udpAddress).toBeUndefined();
+      expect(serverSchema.properties.testAddress).toBeUndefined();
+      expect(serverSchema.properties.testPort).toBeUndefined();
+      expect(serverSchema.properties.pingIntervalTime).toBeUndefined();
+      expect(serverSchema.properties.helloMessageSender).toBeUndefined();
+    });
+
+    test("should have different titles for each mode", () => {
+      const clientSchema = plugin.schema({ serverType: "client" });
+      const serverSchema = plugin.schema({ serverType: "server" });
+      expect(clientSchema.title).toContain("Client");
+      expect(serverSchema.title).toContain("Server");
     });
   });
 
