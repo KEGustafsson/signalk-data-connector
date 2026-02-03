@@ -896,6 +896,15 @@ module.exports = function createPlugin(app) {
         })(),
         pathStats: pathStatsArray,
         pathCategories: PATH_CATEGORIES,
+        smartBatching: isServerMode
+          ? null
+          : {
+            earlySends: metrics.smartBatching.earlySends,
+            timerSends: metrics.smartBatching.timerSends,
+            oversizedPackets: metrics.smartBatching.oversizedPackets,
+            avgBytesPerDelta: metrics.smartBatching.avgBytesPerDelta,
+            maxDeltasPerBatch: metrics.smartBatching.maxDeltasPerBatch
+          },
         lastError: metrics.lastError
           ? {
             message: metrics.lastError,
