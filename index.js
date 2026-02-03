@@ -59,6 +59,13 @@ module.exports = function createPlugin(app) {
   const UDP_RETRY_DELAY = 100; // milliseconds - base retry delay
   const CONTENT_HASH_ALGORITHM = "md5"; // Faster than SHA-256 for file change detection
 
+  // Smart batching constants - prevent UDP packets from exceeding MTU
+  const SMART_BATCH_SAFETY_MARGIN = 0.85; // Target 85% of MTU (leaves room for variance)
+  const SMART_BATCH_SMOOTHING = 0.2; // Rolling average weight (20% new, 80% old)
+  const SMART_BATCH_INITIAL_ESTIMATE = 200; // Initial bytes-per-delta estimate
+  const SMART_BATCH_MIN_DELTAS = 1; // Always allow at least 1 delta per packet
+  const SMART_BATCH_MAX_DELTAS = 50; // Cap to prevent excessive batching latency
+
   const plugin = {};
   plugin.id = "signalk-data-connector";
   plugin.name = "Signal K Data Connector";
@@ -78,6 +85,12 @@ module.exports = function createPlugin(app) {
   let timer = false;
   let pluginOptions; // Store options for access in event handlers
   let lastPacketTime = 0; // Track last packet send time for hello message suppression
+
+  // Smart batching state - dynamically adjusts batch size to keep packets under MTU
+  let avgBytesPerDelta = SMART_BATCH_INITIAL_ESTIMATE; // Rolling average of bytes per delta
+  let maxDeltasPerBatch = Math.floor(
+    (MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN) / SMART_BATCH_INITIAL_ESTIMATE
+  ); // Calculated limit
 
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
@@ -136,7 +149,17 @@ module.exports = function createPlugin(app) {
       history: new CircularBuffer(BANDWIDTH_HISTORY_MAX) // Efficient circular buffer
     },
     // Path-level analytics
-    pathStats: new Map() // path -> { count, bytes, lastUpdate }
+    pathStats: new Map(), // path -> { count, bytes, lastUpdate }
+    // Smart batching metrics
+    smartBatching: {
+      earlySends: 0, // Sends triggered by reaching predicted batch limit
+      timerSends: 0, // Sends triggered by timer
+      oversizedPackets: 0, // Packets that exceeded MTU despite prediction
+      avgBytesPerDelta: SMART_BATCH_INITIAL_ESTIMATE,
+      maxDeltasPerBatch: Math.floor(
+        (MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN) / SMART_BATCH_INITIAL_ESTIMATE
+      )
+    }
   };
 
   // eslint-disable-next-line no-unused-vars
@@ -482,7 +505,24 @@ module.exports = function createPlugin(app) {
 
                 deltas.push(delta);
                 setImmediate(() => app.reportOutputMessages());
-                if (timer) {
+
+                // Smart batching: send early if batch reaches predicted size limit
+                if (deltas.length >= maxDeltasPerBatch) {
+                  app.debug(
+                    `Smart batch: sending ${deltas.length} deltas (reached predicted limit of ${maxDeltasPerBatch})`
+                  );
+                  metrics.smartBatching.earlySends++;
+                  packCrypt(
+                    deltas,
+                    pluginOptions.secretKey,
+                    pluginOptions.udpAddress,
+                    pluginOptions.udpPort
+                  );
+                  deltas = [];
+                  timer = false;
+                } else if (timer) {
+                  // Timer-based send (normal path)
+                  metrics.smartBatching.timerSends++;
                   packCrypt(
                     deltas,
                     pluginOptions.secretKey,
@@ -1172,6 +1212,7 @@ module.exports = function createPlugin(app) {
           `Warning: Packet size ${packet.length} bytes exceeds safe MTU (${MAX_SAFE_UDP_PAYLOAD}), may fragment. ` +
             "Consider reducing delta timer interval or filtering paths."
         );
+        metrics.smartBatching.oversizedPackets++;
       }
 
       // Track bandwidth
@@ -1181,6 +1222,31 @@ module.exports = function createPlugin(app) {
       // Send packet
       await udpSendAsync(packet, udpAddress, udpPort);
       metrics.deltasSent++;
+
+      // Update smart batching model after successful send
+      const deltaCount = Array.isArray(delta) ? delta.length : 1;
+      const bytesPerDelta = packet.length / deltaCount;
+
+      // Update rolling average using exponential smoothing
+      avgBytesPerDelta =
+        (1 - SMART_BATCH_SMOOTHING) * avgBytesPerDelta + SMART_BATCH_SMOOTHING * bytesPerDelta;
+
+      // Recalculate max deltas for next batch based on updated average
+      const targetSize = MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN;
+      maxDeltasPerBatch = Math.floor(targetSize / avgBytesPerDelta);
+      maxDeltasPerBatch = Math.max(
+        SMART_BATCH_MIN_DELTAS,
+        Math.min(SMART_BATCH_MAX_DELTAS, maxDeltasPerBatch)
+      );
+
+      // Update metrics for monitoring
+      metrics.smartBatching.avgBytesPerDelta = Math.round(avgBytesPerDelta);
+      metrics.smartBatching.maxDeltasPerBatch = maxDeltasPerBatch;
+
+      app.debug(
+        `Smart batch: ${deltaCount} deltas, ${packet.length} bytes (${bytesPerDelta.toFixed(0)} bytes/delta), ` +
+          `avg=${avgBytesPerDelta.toFixed(0)}, nextMaxDeltas=${maxDeltasPerBatch}`
+      );
 
       // Update last packet time for hello message suppression
       lastPacketTime = Date.now();
