@@ -2,7 +2,7 @@
 
 A SignalK plugin for secure, encrypted UDP data transmission with advanced bandwidth optimization.
 
-[![Tests](https://img.shields.io/badge/tests-128%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
+[![Tests](https://img.shields.io/badge/tests-181%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen)](https://nodejs.org/)
 
@@ -21,7 +21,8 @@ A SignalK plugin for secure, encrypted UDP data transmission with advanced bandw
 - **Rate Limiting**: API endpoint protection (20 req/min/IP)
 - **Connectivity Monitoring**: TCP ping with automatic reconnection and RTT measurement
 - **Network Metrics**: Real-time Round Trip Time (RTT) published to `networking.modem.rtt` path
-- **MTU Awareness**: Intelligent packet sizing to prevent UDP fragmentation
+- **Smart Batching**: Adaptive packet sizing that learns optimal batch size to prevent UDP fragmentation
+- **Adaptive Configuration UI**: Dynamic settings that show only relevant options for each mode
 
 ## Performance Improvements
 
@@ -77,26 +78,41 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
 
 ## Configuration
 
+The plugin uses an **adaptive configuration UI** that shows only relevant settings for each operation mode, reducing clutter and preventing misconfiguration.
+
 ### Server Mode (Receiver)
 
-1. Set mode to **server**
-2. Configure UDP port (1024-65535)
-3. Set 32-character encryption key
+The configuration UI shows only server-relevant settings:
+
+| Setting | Description |
+|---------|-------------|
+| Operation Mode | Server/Client selector |
+| UDP Port | Port to listen on (1024-65535) |
+| Encryption Key | 32-character secret key |
+| MessagePack | Enable binary serialization |
+| Path Dictionary | Enable path encoding |
 
 ### Client Mode (Sender)
 
-1. Set mode to **client**
-2. Configure:
-   - Server IP address and UDP port
-   - Same 32-character encryption key as server
-   - Test address and port for connectivity monitoring
-   - Hello message interval (seconds)
-   - Ping interval (minutes)
+The configuration UI shows all client settings:
 
-3. Use web UI to configure:
-   - Delta timer (100-10000ms)
-   - Subscription paths (add `networking.modem.rtt` to receive RTT measurements)
-   - Sentence filters
+| Setting | Description |
+|---------|-------------|
+| Operation Mode | Server/Client selector |
+| UDP Port | Port to send to |
+| Encryption Key | 32-character secret key (must match server) |
+| Destination Address | Server IP or hostname |
+| Heartbeat Interval | Keep-alive message frequency (seconds) |
+| Connectivity Test Target | Address to ping for network testing |
+| Connectivity Test Port | Port to test (80, 443, etc.) |
+| Check Interval | How often to test connectivity (minutes) |
+| MessagePack | Enable binary serialization |
+| Path Dictionary | Enable path encoding |
+
+Use the web UI to additionally configure:
+- Delta timer (100-10000ms)
+- Subscription paths (add `networking.modem.rtt` to receive RTT measurements)
+- Sentence filters
 
 ### Web UI
 
@@ -178,6 +194,43 @@ The following chart demonstrates the significant bandwidth savings achieved by t
 
 The encrypted & compressed UDP approach provides **70% bandwidth reduction** compared to WebSocket connections while maintaining data integrity through AES-256-GCM authenticated encryption.
 
+### Smart Batching
+
+The plugin uses **adaptive smart batching** to ensure UDP packets never exceed the MTU limit (1400 bytes), preventing packet fragmentation that can cause data loss on some networks.
+
+**How It Works:**
+
+1. **Rolling Average Tracking**: Monitors average bytes-per-delta using exponential smoothing
+2. **Dynamic Batch Sizing**: Calculates optimal `maxDeltasPerBatch` based on recent packet sizes
+3. **Early Send Trigger**: Sends immediately when batch reaches predicted size limit
+4. **Self-Learning**: Continuously adapts as data patterns change
+
+**Configuration Constants:**
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| Safety Margin | 85% | Target 85% of MTU (1190 bytes) for variance buffer |
+| Smoothing Factor | 0.2 | Rolling average weight (20% new, 80% old) |
+| Initial Estimate | 200 bytes | Starting bytes-per-delta assumption |
+| Min Deltas | 1 | Always send at least 1 delta |
+| Max Deltas | 50 | Cap to prevent excessive batching latency |
+
+**Example Adaptation:**
+
+```
+Initial: 5 deltas/batch (based on 200 bytes estimate)
+After learning: 11 deltas/batch (compression reduces actual bytes/delta)
+Result: All packets stay well under 1400 bytes
+```
+
+**Metrics Available:**
+
+- `smartBatching.earlySends` - Packets sent by reaching batch limit
+- `smartBatching.timerSends` - Packets sent by timer expiration
+- `smartBatching.oversizedPackets` - Packets that exceeded MTU (should be 0)
+- `smartBatching.avgBytesPerDelta` - Current rolling average
+- `smartBatching.maxDeltasPerBatch` - Current calculated limit
+
 ### Bandwidth Optimization Techniques
 
 1. **Binary Protocol**: Eliminates JSON serialization overhead (~40% savings)
@@ -185,7 +238,7 @@ The encrypted & compressed UDP approach provides **70% bandwidth reduction** com
 3. **MessagePack**: Binary serialization format (15-25% additional savings when enabled)
 4. **Brotli Quality 10**: Maximum compression with size hints for optimal efficiency
 5. **Smart Filtering**: GSV sentence filtering prevents unnecessary data transmission
-6. **MTU Awareness**: Optimal packet sizing (1400 bytes) prevents fragmentation
+6. **Smart Batching**: Adaptive packet sizing learns optimal batch size to stay under MTU
 
 ### Performance Characteristics
 
@@ -340,7 +393,7 @@ Enable in SignalK plugin settings to see:
 ```bash
 npm run dev          # Development build with watch mode
 npm run build        # Production build with versioning
-npm test             # Run test suite (128 tests)
+npm test             # Run test suite (181 tests)
 npm run test:watch   # Run tests in watch mode
 npm run test:coverage # Generate coverage report
 npm run lint         # Check code style
@@ -352,11 +405,12 @@ npm run format       # Format code with Prettier
 
 **Test Suite Coverage:**
 
-- ✅ 128 tests, all passing
+- ✅ 181 tests, all passing
 - ✅ Crypto module: 100% coverage (encryption, decryption, validation)
 - ✅ Path dictionary: 100% coverage (encoding, decoding)
 - ✅ Full pipeline: End-to-end tests with real compression/encryption
-- ✅ Configuration: Hot-reload testing
+- ✅ Smart batching: Rolling average, batch limits, size verification
+- ✅ Configuration: Hot-reload testing, adaptive schema validation
 - ✅ Web UI: Metrics and API endpoints
 - ✅ Network monitoring: RTT measurement and publishing
 
@@ -378,11 +432,12 @@ signalk-data-connector/
 ├── src/webapp/           # Web UI source (React-free vanilla JS)
 │   ├── index.js         # Main UI logic
 │   └── styles.css       # Styling
-├── __tests__/           # Test suite (128 tests)
+├── __tests__/           # Test suite (181 tests)
 │   ├── crypto.test.js
 │   ├── pathDictionary.test.js
 │   ├── compression.test.js
 │   ├── full-pipeline.test.js
+│   ├── smartBatching.test.js
 │   ├── config.test.js
 │   └── index.test.js
 └── public/              # Built UI files (generated)
@@ -470,7 +525,7 @@ UDP receive
 
 **Requirements:**
 
-- ✅ All 128 tests must pass
+- ✅ All 181 tests must pass
 - ✅ No ESLint errors or warnings
 - ✅ Code formatted with Prettier
 - ✅ JSDoc comments for public functions
@@ -492,7 +547,27 @@ Examples:
 
 ## Changelog
 
-### v1.0.0-beta.33 (Latest)
+### v1.0.0-beta.61 (Latest)
+
+**New Features:**
+
+- ✅ **Smart Batching**: Adaptive packet sizing that learns optimal batch size to prevent UDP fragmentation
+  - Rolling average tracking of bytes-per-delta
+  - Dynamic `maxDeltasPerBatch` calculation
+  - Self-learning system that adapts to data patterns
+  - Metrics for monitoring batch behavior
+- ✅ **Adaptive Configuration UI**: Dynamic schema shows only relevant settings for each mode
+  - Server mode: Shows only server-relevant settings
+  - Client mode: Shows all client settings including connectivity options
+  - Cleaner UI with mode-specific descriptions
+
+**Test Coverage:**
+
+- 181 tests passing (all critical paths covered)
+- New smart batching test suite
+- Adaptive schema validation tests
+
+### v1.0.0-beta.33
 
 **Major Performance Improvements:**
 
@@ -504,12 +579,6 @@ Examples:
 - ✅ Partial sort for top-N analytics (10x faster)
 - ✅ Server mode bandwidth display improvements
 - ✅ All legacy code removed (no backward compatibility)
-
-**Test Coverage:**
-
-- 125 tests passing (all critical paths covered)
-- 96.78% compression ratio on test data
-- Full pipeline integration tests
 
 **Breaking Changes:**
 
