@@ -8,8 +8,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-/**
- * @license React
+/** @license React v16.14.0
  * react-jsx-runtime.production.min.js
  *
  * Copyright (c) Facebook, Inc. and its affiliates.

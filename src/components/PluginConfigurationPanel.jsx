@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import Form from "@rjsf/core";
 import validator from "@rjsf/validator-ajv8";
 
+const API_BASE = "/plugins/signalk-data-connector";
+
 // Base schema properties shared between server and client modes
 const baseProperties = {
   serverType: {
@@ -87,7 +89,6 @@ function getSchema(isClientMode) {
   const required = ["serverType", "udpPort", "secretKey"];
 
   if (isClientMode) {
-    // Add client-only properties
     Object.assign(properties, clientProperties);
     required.push("udpAddress", "testAddress", "testPort");
   }
@@ -126,11 +127,13 @@ const uiSchema = {
 
 /**
  * Custom configuration panel for SignalK Data Connector plugin
- * Uses RJSF to render a dynamic form that adapts based on serverType selection
+ * Fetches configuration from API and renders dynamic form
  */
-function PluginConfigurationPanel({ configuration, save }) {
-  // Track form data state
-  const [formData, setFormData] = useState(configuration || {});
+function PluginConfigurationPanel(props) {
+  const [formData, setFormData] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saveStatus, setSaveStatus] = useState(null);
 
   // Determine if we're in client mode
   const isClientMode = formData.serverType !== "server";
@@ -138,20 +141,37 @@ function PluginConfigurationPanel({ configuration, save }) {
   // Generate schema based on current mode
   const schema = getSchema(isClientMode);
 
-  // Update form data when configuration prop changes
+  // Fetch configuration from API on mount
   useEffect(() => {
-    if (configuration) {
-      setFormData(configuration);
+    async function fetchConfig() {
+      try {
+        const response = await fetch(`${API_BASE}/plugin-config`);
+        if (!response.ok) {
+          throw new Error(`Failed to load: ${response.statusText}`);
+        }
+        const data = await response.json();
+        if (data.success && data.configuration) {
+          setFormData(data.configuration);
+        }
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
     }
-  }, [configuration]);
+    fetchConfig();
+  }, []);
 
   // Handle form changes
   const handleChange = useCallback(({ formData: newFormData }) => {
     setFormData(newFormData);
+    setSaveStatus(null);
   }, []);
 
   // Handle form submission
-  const handleSubmit = useCallback(({ formData: submittedData }) => {
+  const handleSubmit = useCallback(async ({ formData: submittedData }) => {
+    setSaveStatus({ type: "saving", message: "Saving..." });
+
     // Clean up client-only fields when in server mode
     const cleanedData = { ...submittedData };
     if (cleanedData.serverType === "server") {
@@ -162,19 +182,72 @@ function PluginConfigurationPanel({ configuration, save }) {
       delete cleanedData.pingIntervalTime;
     }
 
-    // Call the save function provided by SignalK
-    if (save) {
-      save(cleanedData);
-    }
-  }, [save]);
+    try {
+      const response = await fetch(`${API_BASE}/plugin-config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cleanedData)
+      });
+      const data = await response.json();
 
-  // Handle errors
-  const handleError = useCallback((errors) => {
-    console.error("Form validation errors:", errors);
+      if (response.ok && data.success) {
+        setSaveStatus({
+          type: "success",
+          message: data.message || "Saved! Restart plugin to apply."
+        });
+      } else {
+        throw new Error(data.error || "Failed to save");
+      }
+    } catch (err) {
+      setSaveStatus({ type: "error", message: err.message });
+    }
   }, []);
+
+  if (loading) {
+    return <div style={{ padding: "20px", textAlign: "center" }}>Loading configuration...</div>;
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: "20px", color: "#dc3545" }}>
+        <h4>Error Loading Configuration</h4>
+        <p>{error}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="signalk-data-connector-config">
+      {saveStatus && (
+        <div
+          style={{
+            padding: "10px 15px",
+            marginBottom: "15px",
+            borderRadius: "4px",
+            backgroundColor:
+              saveStatus.type === "success"
+                ? "#d4edda"
+                : saveStatus.type === "error"
+                  ? "#f8d7da"
+                  : "#fff3cd",
+            color:
+              saveStatus.type === "success"
+                ? "#155724"
+                : saveStatus.type === "error"
+                  ? "#721c24"
+                  : "#856404",
+            border: `1px solid ${
+              saveStatus.type === "success"
+                ? "#c3e6cb"
+                : saveStatus.type === "error"
+                  ? "#f5c6cb"
+                  : "#ffeeba"
+            }`
+          }}
+        >
+          {saveStatus.message}
+        </div>
+      )}
       <Form
         schema={schema}
         uiSchema={uiSchema}
@@ -182,13 +255,15 @@ function PluginConfigurationPanel({ configuration, save }) {
         validator={validator}
         onChange={handleChange}
         onSubmit={handleSubmit}
-        onError={handleError}
         liveValidate={false}
-      />
+      >
+        <button type="submit" className="btn btn-primary">
+          Save Configuration
+        </button>
+      </Form>
       <style>{`
         .signalk-data-connector-config {
           max-width: 600px;
-          margin: 0 auto;
         }
         .signalk-data-connector-config .form-group {
           margin-bottom: 1rem;
@@ -198,7 +273,8 @@ function PluginConfigurationPanel({ configuration, save }) {
           margin-bottom: 0.25rem;
           display: block;
         }
-        .signalk-data-connector-config .help-block {
+        .signalk-data-connector-config .help-block,
+        .signalk-data-connector-config .field-description {
           font-size: 0.85rem;
           color: #666;
           margin-top: 0.25rem;
@@ -214,18 +290,19 @@ function PluginConfigurationPanel({ configuration, save }) {
         .signalk-data-connector-config input[type="checkbox"] {
           width: auto;
         }
-        .signalk-data-connector-config .btn-info {
-          background-color: #17a2b8;
-          border-color: #17a2b8;
+        .signalk-data-connector-config .btn-primary {
+          background-color: #007bff;
+          border-color: #007bff;
           color: white;
           padding: 0.5rem 1rem;
           border-radius: 4px;
           cursor: pointer;
           font-size: 1rem;
+          margin-top: 1rem;
         }
-        .signalk-data-connector-config .btn-info:hover {
-          background-color: #138496;
-          border-color: #117a8b;
+        .signalk-data-connector-config .btn-primary:hover {
+          background-color: #0069d9;
+          border-color: #0062cc;
         }
         .signalk-data-connector-config .text-danger {
           color: #dc3545;

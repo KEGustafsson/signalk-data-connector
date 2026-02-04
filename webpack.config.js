@@ -11,13 +11,14 @@ module.exports = (env, argv) => {
 
   return {
     entry: "./src/index",
+    mode: isProduction ? "production" : "development",
     output: {
       path: path.resolve(__dirname, "public")
     },
     module: {
       rules: [
         {
-          test: /\.(js|jsx)$/,
+          test: /\.jsx?$/,
           exclude: /node_modules/,
           use: {
             loader: "babel-loader",
@@ -49,16 +50,17 @@ module.exports = (env, argv) => {
         },
         shared: {
           react: {
-            singleton: true,
-            eager: false,
-            requiredVersion: false
+            singleton: false,
+            strictVersion: true
           },
           "react-dom": {
-            singleton: true,
-            eager: false,
-            requiredVersion: false
+            singleton: false,
+            strictVersion: true
           }
         }
+      }),
+      new webpack.WatchIgnorePlugin({
+        paths: [path.resolve(__dirname, "public/")]
       }),
       new HtmlWebpackPlugin({
         template: "./src/webapp/index.html",
