@@ -1496,11 +1496,12 @@ module.exports = function createPlugin(app) {
     }
   };
 
-// Schema using JSON Schema conditionals for dynamic field visibility
-  // SignalK UI interprets these to show/hide fields based on serverType selection
+// Schema using RJSF dependencies with oneOf for conditional field visibility
+  // Client-only fields appear ONLY when serverType is "client"
+  // Based on: https://rjsf-team.github.io/react-jsonschema-form/docs/json-schema/dependencies/
   plugin.schema = {
     type: "object",
-    title: "SignalK Data Connector Configuration",
+    title: "SignalK Data Connector",
     description: "Configure encrypted UDP data transmission between SignalK units",
     required: ["serverType", "udpPort", "secretKey"],
     properties: {
@@ -1530,69 +1531,32 @@ module.exports = function createPlugin(app) {
       useMsgpack: {
         type: "boolean",
         title: "Use MessagePack",
-        description: "Binary serialization for 15-25% smaller payloads (must match on both ends)",
+        description: "Binary serialization for smaller payloads (must match on both ends)",
         default: false
       },
       usePathDictionary: {
         type: "boolean",
         title: "Use Path Dictionary",
-        description: "Encode paths as numeric IDs for 10-20% bandwidth savings (must match on both ends)",
+        description: "Encode paths as numeric IDs for bandwidth savings (must match on both ends)",
         default: false
-      },
-      // Client-only fields - shown via dependencies
-      udpAddress: {
-        type: "string",
-        title: "Server Address (Client Mode)",
-        description: "IP address or hostname of the SignalK server to send data to",
-        default: "127.0.0.1"
-      },
-      helloMessageSender: {
-        type: "integer",
-        title: "Heartbeat Interval (Client Mode)",
-        description: "Seconds between heartbeat messages to maintain connection",
-        default: 60,
-        minimum: 10,
-        maximum: 3600
-      },
-      testAddress: {
-        type: "string",
-        title: "Connectivity Test Address (Client Mode)",
-        description: "Address to ping for network testing (e.g., 8.8.8.8, router IP)",
-        default: "127.0.0.1"
-      },
-      testPort: {
-        type: "number",
-        title: "Connectivity Test Port (Client Mode)",
-        description: "Port for connectivity test (80=HTTP, 443=HTTPS, 53=DNS)",
-        default: 80,
-        minimum: 1,
-        maximum: 65535
-      },
-      pingIntervalTime: {
-        type: "number",
-        title: "Connectivity Check Interval (Client Mode)",
-        description: "Minutes between connectivity checks",
-        default: 1,
-        minimum: 0.1,
-        maximum: 60
       }
     },
-    // Use dependencies to show client-only fields only when serverType is "client"
+    // Client-only fields are defined ONLY inside oneOf, not in main properties
     dependencies: {
       serverType: {
         oneOf: [
           {
             properties: {
-              serverType: { const: "server" }
+              serverType: { enum: ["server"] }
             }
           },
           {
             properties: {
-              serverType: { const: "client" },
+              serverType: { enum: ["client"] },
               udpAddress: {
                 type: "string",
                 title: "Server Address",
-                description: "IP address or hostname of the SignalK server to send data to",
+                description: "IP address or hostname of the SignalK server",
                 default: "127.0.0.1"
               },
               helloMessageSender: {
@@ -1606,13 +1570,13 @@ module.exports = function createPlugin(app) {
               testAddress: {
                 type: "string",
                 title: "Connectivity Test Address",
-                description: "Address to ping for network testing",
+                description: "Address to ping for network testing (e.g., 8.8.8.8)",
                 default: "127.0.0.1"
               },
               testPort: {
                 type: "number",
                 title: "Connectivity Test Port",
-                description: "Port for connectivity test",
+                description: "Port for connectivity test (80, 443, 53)",
                 default: 80,
                 minimum: 1,
                 maximum: 65535
@@ -1620,7 +1584,7 @@ module.exports = function createPlugin(app) {
               pingIntervalTime: {
                 type: "number",
                 title: "Check Interval (minutes)",
-                description: "How often to test connectivity",
+                description: "How often to test network connectivity",
                 default: 1,
                 minimum: 0.1,
                 maximum: 60

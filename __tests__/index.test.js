@@ -80,29 +80,44 @@ describe("SignalK Data Connector Plugin", () => {
       expect(secretKey.maxLength).toBe(32);
     });
 
-    test("should have client-only fields in properties", () => {
-      expect(plugin.schema.properties.udpAddress).toBeDefined();
-      expect(plugin.schema.properties.testAddress).toBeDefined();
-      expect(plugin.schema.properties.testPort).toBeDefined();
-      expect(plugin.schema.properties.pingIntervalTime).toBeDefined();
-      expect(plugin.schema.properties.helloMessageSender).toBeDefined();
+    test("should NOT have client-only fields in main properties", () => {
+      // Client-only fields should only be in dependencies.oneOf, not main properties
+      expect(plugin.schema.properties.udpAddress).toBeUndefined();
+      expect(plugin.schema.properties.testAddress).toBeUndefined();
+      expect(plugin.schema.properties.testPort).toBeUndefined();
+      expect(plugin.schema.properties.pingIntervalTime).toBeUndefined();
+      expect(plugin.schema.properties.helloMessageSender).toBeUndefined();
     });
 
-    test("should have dependencies for conditional display", () => {
+    test("should have dependencies with oneOf for conditional display", () => {
       expect(plugin.schema.dependencies).toBeDefined();
       expect(plugin.schema.dependencies.serverType).toBeDefined();
       expect(plugin.schema.dependencies.serverType.oneOf).toBeDefined();
       expect(plugin.schema.dependencies.serverType.oneOf.length).toBe(2);
     });
 
-    test("should require additional fields for client mode in dependencies", () => {
+    test("should have client-only fields inside oneOf for client mode", () => {
       const clientDep = plugin.schema.dependencies.serverType.oneOf.find(
-        (dep) => dep.properties.serverType.const === "client"
+        (dep) => dep.properties.serverType.enum && dep.properties.serverType.enum.includes("client")
       );
       expect(clientDep).toBeDefined();
+      expect(clientDep.properties.udpAddress).toBeDefined();
+      expect(clientDep.properties.testAddress).toBeDefined();
+      expect(clientDep.properties.testPort).toBeDefined();
+      expect(clientDep.properties.pingIntervalTime).toBeDefined();
+      expect(clientDep.properties.helloMessageSender).toBeDefined();
       expect(clientDep.required).toContain("udpAddress");
       expect(clientDep.required).toContain("testAddress");
       expect(clientDep.required).toContain("testPort");
+    });
+
+    test("should NOT have client fields in server mode oneOf", () => {
+      const serverDep = plugin.schema.dependencies.serverType.oneOf.find(
+        (dep) => dep.properties.serverType.enum && dep.properties.serverType.enum.includes("server")
+      );
+      expect(serverDep).toBeDefined();
+      expect(serverDep.properties.udpAddress).toBeUndefined();
+      expect(serverDep.properties.testAddress).toBeUndefined();
     });
   });
 
