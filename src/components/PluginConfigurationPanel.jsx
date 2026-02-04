@@ -263,7 +263,7 @@ function PluginConfigurationPanel(props) {
       </Form>
       <style>{`
         .signalk-data-connector-config {
-          max-width: 600px;
+          width: 100%;
         }
         .signalk-data-connector-config .form-group {
           margin-bottom: 1rem;
