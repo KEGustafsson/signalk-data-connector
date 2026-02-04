@@ -556,6 +556,3 @@ Examples:
 MIT License - Copyright (c) 2024 Karl-Erik Gustafsson
 
 See [LICENSE](LICENSE) file for details.
-
-
-**Made with ❤️ for the SignalK community**
