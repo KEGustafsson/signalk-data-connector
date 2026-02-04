@@ -7,7 +7,10 @@ module.exports = (env, argv) => {
   const isProduction = argv.mode === "production";
 
   return {
-    entry: "./src/webapp/index.js",
+    entry: {
+      main: "./src/webapp/index.js",
+      configPanel: "./src/components/configPanel.js"
+    },
     output: {
       path: path.resolve(__dirname, "public"),
       filename: isProduction ? "[name].[contenthash].js" : "[name].js",
@@ -16,12 +19,12 @@ module.exports = (env, argv) => {
     module: {
       rules: [
         {
-          test: /\.js$/,
+          test: /\.(js|jsx)$/,
           exclude: /node_modules/,
           use: {
             loader: "babel-loader",
             options: {
-              presets: ["@babel/preset-env"]
+              presets: ["@babel/preset-env", "@babel/preset-react"]
             }
           }
         },
@@ -35,7 +38,14 @@ module.exports = (env, argv) => {
       new HtmlWebpackPlugin({
         template: "./src/webapp/index.html",
         filename: "index.html",
-        title: "SignalK Data Connector Configuration"
+        title: "SignalK Data Connector Configuration",
+        chunks: ["main"]
+      }),
+      new HtmlWebpackPlugin({
+        template: "./src/components/config.html",
+        filename: "config.html",
+        title: "SignalK Data Connector - Plugin Configuration",
+        chunks: ["configPanel"]
       }),
       new CopyWebpackPlugin({
         patterns: [
@@ -56,7 +66,7 @@ module.exports = (env, argv) => {
     ],
     devtool: isProduction ? "source-map" : "eval-source-map",
     resolve: {
-      extensions: [".js", ".json"]
+      extensions: [".js", ".jsx", ".json"]
     }
   };
 };

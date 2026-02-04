@@ -80,6 +80,13 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
 
 The plugin uses an **adaptive configuration UI** that shows only relevant settings for each operation mode, reducing clutter and preventing misconfiguration.
 
+### Accessing Configuration
+
+There are two ways to configure the plugin:
+
+1. **SignalK Admin UI**: Admin UI → Plugin Config → Signal K Data Connector (standard schema-based form)
+2. **Custom Configuration Panel**: Access via `http://[signalk-server]:3000/plugins/signalk-data-connector/config.html` for dynamic adaptive UI that shows/hides fields based on selected mode
+
 ### Server Mode (Receiver)
 
 The configuration UI shows only server-relevant settings:
@@ -547,7 +554,21 @@ Examples:
 
 ## Changelog
 
-### v1.0.0-beta.61 (Latest)
+### v1.0.0-beta.62 (Latest)
+
+**New Features:**
+
+- **Custom React Configuration Panel**: Dynamic plugin settings UI that shows/hides fields based on operation mode (server/client)
+- **Plugin Configuration API**: RESTful endpoints for reading and saving plugin configuration
+- **Navigation Links**: Easy switching between main webapp and plugin settings
+
+**Improvements:**
+
+- Webpack now supports JSX and React components
+- Added @rjsf/core for JSON Schema Form rendering
+- Configuration changes now require explicit plugin restart
+
+### v1.0.0-beta.61
 
 **New Features:**
 

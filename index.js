@@ -935,6 +935,83 @@ module.exports = function createPlugin(app) {
       });
     });
 
+    // Plugin configuration endpoint - get current config
+    router.get("/plugin-config", rateLimitMiddleware, (req, res) => {
+      try {
+        // Get current plugin configuration from SignalK
+        const pluginConfig = app.readPluginOptions();
+        res.json({
+          success: true,
+          configuration: pluginConfig.configuration || {}
+        });
+      } catch (error) {
+        app.error(`Error reading plugin config: ${error.message}`);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Plugin configuration endpoint - save config
+    router.post("/plugin-config", rateLimitMiddleware, async (req, res) => {
+      // Validate Content-Type
+      const contentType = req.headers["content-type"];
+      if (!contentType || !contentType.includes("application/json")) {
+        return res.status(415).json({ success: false, error: "Content-Type must be application/json" });
+      }
+
+      try {
+        const newConfig = req.body;
+
+        // Validate required fields
+        if (!newConfig.serverType) {
+          return res.status(400).json({ success: false, error: "serverType is required" });
+        }
+        if (!newConfig.udpPort || newConfig.udpPort < 1024 || newConfig.udpPort > 65535) {
+          return res.status(400).json({ success: false, error: "Valid udpPort (1024-65535) is required" });
+        }
+        if (!newConfig.secretKey || newConfig.secretKey.length !== 32) {
+          return res.status(400).json({ success: false, error: "secretKey must be exactly 32 characters" });
+        }
+
+        // Validate client-specific fields
+        if (newConfig.serverType === "client") {
+          if (!newConfig.udpAddress) {
+            return res.status(400).json({ success: false, error: "udpAddress is required in client mode" });
+          }
+          if (!newConfig.testAddress) {
+            return res.status(400).json({ success: false, error: "testAddress is required in client mode" });
+          }
+          if (!newConfig.testPort) {
+            return res.status(400).json({ success: false, error: "testPort is required in client mode" });
+          }
+        }
+
+        // Save configuration using SignalK API
+        app.savePluginOptions({ configuration: newConfig }, (err) => {
+          if (err) {
+            app.error(`Error saving plugin config: ${err.message}`);
+            res.status(500).json({ success: false, error: err.message });
+          } else {
+            res.json({
+              success: true,
+              message: "Configuration saved. Restart plugin to apply changes.",
+              requiresRestart: true
+            });
+          }
+        });
+      } catch (error) {
+        app.error(`Error saving plugin config: ${error.message}`);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Get schema for configuration UI
+    router.get("/plugin-schema", rateLimitMiddleware, (req, res) => {
+      res.json({
+        schema: plugin.schema,
+        currentMode: isServerMode ? "server" : "client"
+      });
+    });
+
     /**
      * Middleware to check client mode and storage initialization
      */
