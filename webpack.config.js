@@ -4,6 +4,7 @@ const HtmlWebpackPlugin = require("html-webpack-plugin");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const { ModuleFederationPlugin } = webpack.container;
+const packageJson = require("./package.json");
 
 module.exports = (env, argv) => {
   const isProduction = argv.mode === "production";
@@ -11,10 +12,7 @@ module.exports = (env, argv) => {
   return {
     entry: "./src/index",
     output: {
-      path: path.resolve(__dirname, "public"),
-      filename: isProduction ? "[name].[contenthash].js" : "[name].js",
-      publicPath: "auto",
-      clean: true
+      path: path.resolve(__dirname, "public")
     },
     module: {
       rules: [
@@ -40,19 +38,23 @@ module.exports = (env, argv) => {
     },
     plugins: [
       new ModuleFederationPlugin({
-        name: "signalkDataConnector",
+        name: "SignalK Data Connector",
+        library: {
+          type: "var",
+          name: packageJson.name.replace(/[-@/]/g, "_")
+        },
         filename: "remoteEntry.js",
         exposes: {
           "./PluginConfigurationPanel": "./src/components/PluginConfigurationPanel"
         },
         shared: {
           react: {
-            singleton: true,
-            requiredVersion: "^18.2.0"
+            singleton: false,
+            strictVersion: true
           },
           "react-dom": {
-            singleton: true,
-            requiredVersion: "^18.2.0"
+            singleton: false,
+            strictVersion: true
           }
         }
       }),
