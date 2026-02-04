@@ -78,14 +78,13 @@ Restart SignalK server and configure via: Admin UI → Plugin Config → Signal 
 
 ## Configuration
 
-The plugin uses an **adaptive configuration UI** that shows only relevant settings for each operation mode, reducing clutter and preventing misconfiguration.
+The plugin uses a **custom React-based adaptive configuration UI** that replaces SignalK's default plugin configuration page. This UI dynamically shows only relevant settings for each operation mode, reducing clutter and preventing misconfiguration.
 
 ### Accessing Configuration
 
-There are two ways to configure the plugin:
+Navigate to: **Admin UI → Plugin Config → Signal K Data Connector**
 
-1. **SignalK Admin UI**: Admin UI → Plugin Config → Signal K Data Connector (standard schema-based form)
-2. **Custom Configuration Panel**: Access via `http://[signalk-server]:3000/plugins/signalk-data-connector/config.html` for dynamic adaptive UI that shows/hides fields based on selected mode
+The plugin uses Webpack Module Federation to expose a custom React component (`PluginConfigurationPanel`) that SignalK loads automatically. This provides a dynamic form that adapts when you switch between Server and Client modes - no page refresh required.
 
 ### Server Mode (Receiver)
 
@@ -554,13 +553,27 @@ Examples:
 
 ## Changelog
 
-### v1.0.0-beta.62 (Latest)
+### v1.0.0-beta.63 (Latest)
+
+**New Features:**
+
+- **Module Federation Configuration Panel**: Custom React component that replaces SignalK's default plugin configuration page
+- Uses Webpack Module Federation to expose `PluginConfigurationPanel` component
+- SignalK automatically loads the adaptive UI when configuring the plugin
+- Dynamic form that shows/hides fields based on serverType selection - no page refresh needed
+
+**Improvements:**
+
+- Added `signalk-plugin-configurator` keyword for custom configuration UI
+- Simplified architecture - single entry point for webapp and federated module
+- Plugin Configuration API retained for programmatic access
+
+### v1.0.0-beta.62
 
 **New Features:**
 
 - **Custom React Configuration Panel**: Dynamic plugin settings UI that shows/hides fields based on operation mode (server/client)
 - **Plugin Configuration API**: RESTful endpoints for reading and saving plugin configuration
-- **Navigation Links**: Easy switching between main webapp and plugin settings
 
 **Improvements:**
 

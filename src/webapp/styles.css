@@ -48,25 +48,6 @@ body {
   font-size: 1.1rem;
 }
 
-.header-nav {
-  margin-top: 1rem;
-}
-
-.nav-link {
-  color: white;
-  text-decoration: none;
-  padding: 0.5rem 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 4px;
-  display: inline-block;
-  transition: all 0.2s ease;
-}
-
-.nav-link:hover {
-  background-color: rgba(255, 255, 255, 0.2);
-  border-color: white;
-}
-
 .container {
   max-width: 1200px;
   margin: 0 auto;

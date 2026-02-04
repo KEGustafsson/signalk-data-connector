@@ -1,13 +1,14 @@
 {
   "name": "signalk-data-connector",
-  "version": "1.0.0-beta.62",
+  "version": "1.0.0-beta.63",
   "description": "SignalK plugin for encrypted UDP data transmission with webapp configuration",
   "main": "index.js",
   "keywords": [
     "signalk-node-server-plugin",
     "signalk-category-network",
     "signalk-webapp",
-    "signalk-category-utility"
+    "signalk-category-utility",
+    "signalk-plugin-configurator"
   ],
   "signalk": {
     "appIcon": "./icons/icon-72x72.png",

@@ -1,19 +1,19 @@
 const path = require("path");
+const webpack = require("webpack");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
+const { ModuleFederationPlugin } = webpack.container;
 
 module.exports = (env, argv) => {
   const isProduction = argv.mode === "production";
 
   return {
-    entry: {
-      main: "./src/webapp/index.js",
-      configPanel: "./src/components/configPanel.js"
-    },
+    entry: "./src/index",
     output: {
       path: path.resolve(__dirname, "public"),
       filename: isProduction ? "[name].[contenthash].js" : "[name].js",
+      publicPath: "auto",
       clean: true
     },
     module: {
@@ -31,21 +31,35 @@ module.exports = (env, argv) => {
         {
           test: /\.css$/,
           use: [isProduction ? MiniCssExtractPlugin.loader : "style-loader", "css-loader"]
+        },
+        {
+          test: /\.(png|jpg|gif|svg)$/,
+          type: "asset/resource"
         }
       ]
     },
     plugins: [
+      new ModuleFederationPlugin({
+        name: "signalkDataConnector",
+        filename: "remoteEntry.js",
+        exposes: {
+          "./PluginConfigurationPanel": "./src/components/PluginConfigurationPanel"
+        },
+        shared: {
+          react: {
+            singleton: true,
+            requiredVersion: "^18.2.0"
+          },
+          "react-dom": {
+            singleton: true,
+            requiredVersion: "^18.2.0"
+          }
+        }
+      }),
       new HtmlWebpackPlugin({
         template: "./src/webapp/index.html",
         filename: "index.html",
-        title: "SignalK Data Connector Configuration",
-        chunks: ["main"]
-      }),
-      new HtmlWebpackPlugin({
-        template: "./src/components/config.html",
-        filename: "config.html",
-        title: "SignalK Data Connector - Plugin Configuration",
-        chunks: ["configPanel"]
+        title: "SignalK Data Connector Configuration"
       }),
       new CopyWebpackPlugin({
         patterns: [
