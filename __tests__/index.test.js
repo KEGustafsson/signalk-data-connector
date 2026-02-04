@@ -539,4 +539,149 @@ describe("SignalK Data Connector Plugin", () => {
       expect(() => plugin.stop()).not.toThrow();
     });
   });
+
+  describe("Metrics Endpoint", () => {
+    let mockRouter;
+    let metricsHandler;
+    let metricsMiddlewares;
+
+    beforeEach(() => {
+      mockRouter = {
+        get: jest.fn((path, ...handlers) => {
+          if (path === "/metrics") {
+            metricsHandler = handlers[handlers.length - 1];
+            metricsMiddlewares = handlers.slice(0, -1);
+          }
+        }),
+        post: jest.fn()
+      };
+
+      plugin.registerWithRouter(mockRouter);
+    });
+
+    function runWithMiddlewares(middlewares, handler, req, res) {
+      return new Promise((resolve) => {
+        let currentIndex = 0;
+
+        const next = () => {
+          currentIndex++;
+          if (currentIndex < middlewares.length) {
+            middlewares[currentIndex](req, res, next);
+          } else {
+            Promise.resolve(handler(req, res)).then(resolve);
+          }
+        };
+
+        if (middlewares.length > 0) {
+          middlewares[0](req, res, next);
+        } else {
+          Promise.resolve(handler(req, res)).then(resolve);
+        }
+
+        setTimeout(resolve, 10);
+      });
+    }
+
+    test("should register /metrics GET endpoint", () => {
+      expect(mockRouter.get).toHaveBeenCalledWith("/metrics", expect.any(Function), expect.any(Function));
+    });
+
+    test("should return metrics data structure", async () => {
+      const mockReq = { ip: "127.0.0.1" };
+      const mockRes = {
+        json: jest.fn()
+      };
+
+      await runWithMiddlewares(metricsMiddlewares, metricsHandler, mockReq, mockRes);
+
+      expect(mockRes.json).toHaveBeenCalled();
+      const metricsData = mockRes.json.mock.calls[0][0];
+
+      // Verify metrics structure
+      expect(metricsData).toHaveProperty("uptime");
+      expect(metricsData).toHaveProperty("mode");
+      expect(metricsData).toHaveProperty("stats");
+      expect(metricsData).toHaveProperty("status");
+      expect(metricsData).toHaveProperty("bandwidth");
+      expect(metricsData).toHaveProperty("pathStats");
+    });
+
+    test("metrics should have correct uptime structure", async () => {
+      const mockReq = { ip: "127.0.0.1" };
+      const mockRes = { json: jest.fn() };
+
+      await runWithMiddlewares(metricsMiddlewares, metricsHandler, mockReq, mockRes);
+
+      const metricsData = mockRes.json.mock.calls[0][0];
+      expect(metricsData.uptime).toHaveProperty("milliseconds");
+      expect(metricsData.uptime).toHaveProperty("seconds");
+      expect(metricsData.uptime).toHaveProperty("formatted");
+      expect(typeof metricsData.uptime.formatted).toBe("string");
+    });
+
+    test("metrics should have correct stats structure", async () => {
+      const mockReq = { ip: "127.0.0.1" };
+      const mockRes = { json: jest.fn() };
+
+      await runWithMiddlewares(metricsMiddlewares, metricsHandler, mockReq, mockRes);
+
+      const metricsData = mockRes.json.mock.calls[0][0];
+      expect(metricsData.stats).toHaveProperty("deltasSent");
+      expect(metricsData.stats).toHaveProperty("deltasReceived");
+      expect(metricsData.stats).toHaveProperty("udpSendErrors");
+      expect(metricsData.stats).toHaveProperty("compressionErrors");
+      expect(metricsData.stats).toHaveProperty("encryptionErrors");
+    });
+
+    test("metrics should have correct bandwidth structure", async () => {
+      const mockReq = { ip: "127.0.0.1" };
+      const mockRes = { json: jest.fn() };
+
+      await runWithMiddlewares(metricsMiddlewares, metricsHandler, mockReq, mockRes);
+
+      const metricsData = mockRes.json.mock.calls[0][0];
+      expect(metricsData.bandwidth).toHaveProperty("bytesOut");
+      expect(metricsData.bandwidth).toHaveProperty("bytesIn");
+      expect(metricsData.bandwidth).toHaveProperty("bytesOutFormatted");
+      expect(metricsData.bandwidth).toHaveProperty("compressionRatio");
+      expect(metricsData.bandwidth).toHaveProperty("history");
+      expect(Array.isArray(metricsData.bandwidth.history)).toBe(true);
+    });
+
+    test("metrics pathStats should be an array", async () => {
+      const mockReq = { ip: "127.0.0.1" };
+      const mockRes = { json: jest.fn() };
+
+      await runWithMiddlewares(metricsMiddlewares, metricsHandler, mockReq, mockRes);
+
+      const metricsData = mockRes.json.mock.calls[0][0];
+      expect(Array.isArray(metricsData.pathStats)).toBe(true);
+    });
+
+    test("metrics should include mode (client or server)", async () => {
+      const mockReq = { ip: "127.0.0.1" };
+      const mockRes = { json: jest.fn() };
+
+      await runWithMiddlewares(metricsMiddlewares, metricsHandler, mockReq, mockRes);
+
+      const metricsData = mockRes.json.mock.calls[0][0];
+      expect(["client", "server"]).toContain(metricsData.mode);
+    });
+
+    test("metrics should rate limit requests", async () => {
+      const mockReq = { ip: "test-ip-rate-limit" };
+      const mockRes = {
+        json: jest.fn(),
+        status: jest.fn().mockReturnThis()
+      };
+
+      // Make 21 requests (limit is 20)
+      for (let i = 0; i < 21; i++) {
+        await runWithMiddlewares(metricsMiddlewares, metricsHandler, mockReq, mockRes);
+      }
+
+      // Last request should be rate limited (status 429)
+      expect(mockRes.status).toHaveBeenCalledWith(429);
+    });
+  });
 });

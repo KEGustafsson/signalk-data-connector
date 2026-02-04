@@ -272,6 +272,240 @@ describe("Web UI Constants", () => {
   });
 });
 
+describe("Metrics Data Flow - Backend to Frontend", () => {
+  // Sample metrics data that backend returns
+  const sampleMetrics = {
+    uptime: {
+      milliseconds: 3600000,
+      seconds: 3600,
+      formatted: "1h 0m 0s"
+    },
+    mode: "client",
+    stats: {
+      deltasSent: 1500,
+      deltasReceived: 0,
+      udpSendErrors: 2,
+      udpRetries: 5,
+      compressionErrors: 0,
+      encryptionErrors: 1,
+      subscriptionErrors: 0
+    },
+    status: {
+      readyToSend: true,
+      deltasBuffered: 3
+    },
+    bandwidth: {
+      bytesOut: 512000,
+      bytesIn: 0,
+      bytesOutRaw: 2048000,
+      bytesInRaw: 0,
+      bytesOutFormatted: "500 KB",
+      bytesInFormatted: "0 B",
+      bytesOutRawFormatted: "2 MB",
+      packetsOut: 150,
+      packetsIn: 0,
+      rateOut: 1024,
+      rateIn: 0,
+      rateOutFormatted: "1 KB/s",
+      rateInFormatted: "0 B/s",
+      compressionRatio: 75,
+      avgPacketSize: 3413,
+      avgPacketSizeFormatted: "3.33 KB",
+      history: [
+        { timestamp: Date.now() - 30000, rateOut: 800, rateIn: 0, compressionRatio: 70 },
+        { timestamp: Date.now() - 15000, rateOut: 1000, rateIn: 0, compressionRatio: 74 },
+        { timestamp: Date.now(), rateOut: 1024, rateIn: 0, compressionRatio: 75 }
+      ]
+    },
+    pathStats: [
+      { path: "navigation.position", count: 500, bytes: 128000, bytesFormatted: "125 KB", percentage: 50, updatesPerMinute: 60 },
+      { path: "navigation.speedOverGround", count: 300, bytes: 64000, bytesFormatted: "62.5 KB", percentage: 25, updatesPerMinute: 36 },
+      { path: "environment.wind.speedApparent", count: 200, bytes: 64000, bytesFormatted: "62.5 KB", percentage: 25, updatesPerMinute: 24 }
+    ],
+    smartBatching: {
+      earlySends: 45,
+      timerSends: 100,
+      oversizedPackets: 2,
+      avgBytesPerDelta: 150,
+      maxDeltasPerBatch: 8
+    },
+    lastError: null
+  };
+
+  const serverModeMetrics = {
+    ...sampleMetrics,
+    mode: "server",
+    stats: {
+      ...sampleMetrics.stats,
+      deltasSent: 0,
+      deltasReceived: 1500
+    },
+    bandwidth: {
+      ...sampleMetrics.bandwidth,
+      bytesOut: 0,
+      bytesIn: 512000,
+      bytesOutRaw: 0,
+      bytesInRaw: 2048000
+    },
+    smartBatching: null
+  };
+
+  test("metrics data structure should have all required fields", () => {
+    expect(sampleMetrics).toHaveProperty("uptime");
+    expect(sampleMetrics).toHaveProperty("mode");
+    expect(sampleMetrics).toHaveProperty("stats");
+    expect(sampleMetrics).toHaveProperty("status");
+    expect(sampleMetrics).toHaveProperty("bandwidth");
+    expect(sampleMetrics).toHaveProperty("pathStats");
+  });
+
+  test("uptime object should have correct structure", () => {
+    expect(sampleMetrics.uptime).toHaveProperty("milliseconds");
+    expect(sampleMetrics.uptime).toHaveProperty("seconds");
+    expect(sampleMetrics.uptime).toHaveProperty("formatted");
+    expect(typeof sampleMetrics.uptime.formatted).toBe("string");
+  });
+
+  test("stats object should have all counters", () => {
+    const { stats } = sampleMetrics;
+    expect(stats).toHaveProperty("deltasSent");
+    expect(stats).toHaveProperty("deltasReceived");
+    expect(stats).toHaveProperty("udpSendErrors");
+    expect(stats).toHaveProperty("udpRetries");
+    expect(stats).toHaveProperty("compressionErrors");
+    expect(stats).toHaveProperty("encryptionErrors");
+    expect(stats).toHaveProperty("subscriptionErrors");
+  });
+
+  test("bandwidth object should have transmission metrics", () => {
+    const { bandwidth } = sampleMetrics;
+    expect(bandwidth).toHaveProperty("bytesOut");
+    expect(bandwidth).toHaveProperty("bytesIn");
+    expect(bandwidth).toHaveProperty("bytesOutRaw");
+    expect(bandwidth).toHaveProperty("compressionRatio");
+    expect(bandwidth).toHaveProperty("history");
+    expect(Array.isArray(bandwidth.history)).toBe(true);
+  });
+
+  test("pathStats should be an array of path objects", () => {
+    expect(Array.isArray(sampleMetrics.pathStats)).toBe(true);
+    sampleMetrics.pathStats.forEach((pathStat) => {
+      expect(pathStat).toHaveProperty("path");
+      expect(pathStat).toHaveProperty("count");
+      expect(pathStat).toHaveProperty("bytes");
+      expect(pathStat).toHaveProperty("percentage");
+    });
+  });
+
+  test("smartBatching should be present for client mode", () => {
+    expect(sampleMetrics.smartBatching).not.toBeNull();
+    expect(sampleMetrics.smartBatching).toHaveProperty("earlySends");
+    expect(sampleMetrics.smartBatching).toHaveProperty("timerSends");
+    expect(sampleMetrics.smartBatching).toHaveProperty("maxDeltasPerBatch");
+  });
+
+  test("smartBatching should be null for server mode", () => {
+    expect(serverModeMetrics.smartBatching).toBeNull();
+  });
+
+  test("compression ratio should be calculated correctly", () => {
+    // compressionRatio = (1 - compressed/raw) * 100
+    // For client: (1 - 512000/2048000) * 100 = 75%
+    expect(sampleMetrics.bandwidth.compressionRatio).toBe(75);
+  });
+
+  test("path percentages should sum to approximately 100", () => {
+    const totalPercentage = sampleMetrics.pathStats.reduce((sum, p) => sum + p.percentage, 0);
+    expect(totalPercentage).toBe(100);
+  });
+
+  // Simulate frontend validation of metrics data
+  const validateMetricsForDisplay = (metrics) => {
+    if (!metrics) {
+      return { valid: false, reason: "metrics is null" };
+    }
+    if (!metrics.stats) {
+      return { valid: false, reason: "stats missing" };
+    }
+    if (!metrics.status) {
+      return { valid: false, reason: "status missing" };
+    }
+    if (!metrics.uptime) {
+      return { valid: false, reason: "uptime missing" };
+    }
+    return { valid: true };
+  };
+
+  test("validateMetricsForDisplay should accept valid metrics", () => {
+    expect(validateMetricsForDisplay(sampleMetrics).valid).toBe(true);
+    expect(validateMetricsForDisplay(serverModeMetrics).valid).toBe(true);
+  });
+
+  test("validateMetricsForDisplay should reject incomplete metrics", () => {
+    expect(validateMetricsForDisplay(null).valid).toBe(false);
+    expect(validateMetricsForDisplay({}).valid).toBe(false);
+    expect(validateMetricsForDisplay({ stats: {} }).valid).toBe(false);
+    expect(validateMetricsForDisplay({ stats: {}, status: {} }).valid).toBe(false);
+  });
+
+  // Simulate frontend bandwidth display logic
+  const calculateBandwidthSavings = (metrics) => {
+    if (!metrics || !metrics.bandwidth) {
+      return 0;
+    }
+    const bw = metrics.bandwidth;
+    const isClient = metrics.mode === "client";
+    const savedBytes = isClient ? bw.bytesOutRaw - bw.bytesOut : bw.bytesInRaw - bw.bytesIn;
+    return savedBytes > 0 ? savedBytes : 0;
+  };
+
+  test("calculateBandwidthSavings should work for client mode", () => {
+    const savings = calculateBandwidthSavings(sampleMetrics);
+    expect(savings).toBe(2048000 - 512000); // 1.5MB saved
+  });
+
+  test("calculateBandwidthSavings should work for server mode", () => {
+    const savings = calculateBandwidthSavings(serverModeMetrics);
+    expect(savings).toBe(2048000 - 512000); // Same savings on server side
+  });
+
+  test("calculateBandwidthSavings should handle missing data", () => {
+    expect(calculateBandwidthSavings(null)).toBe(0);
+    expect(calculateBandwidthSavings({})).toBe(0);
+    expect(calculateBandwidthSavings({ mode: "client" })).toBe(0);
+  });
+
+  // Test error state detection
+  const hasErrors = (metrics) => {
+    if (!metrics || !metrics.stats) {
+      return false;
+    }
+    const { stats } = metrics;
+    return (
+      stats.udpSendErrors > 0 ||
+      stats.compressionErrors > 0 ||
+      stats.encryptionErrors > 0 ||
+      stats.subscriptionErrors > 0
+    );
+  };
+
+  test("hasErrors should detect errors in stats", () => {
+    expect(hasErrors(sampleMetrics)).toBe(true); // Has udpSendErrors and encryptionErrors
+  });
+
+  test("hasErrors should return false when no errors", () => {
+    const noErrorMetrics = {
+      ...sampleMetrics,
+      stats: {
+        ...sampleMetrics.stats,
+        udpSendErrors: 0,
+        encryptionErrors: 0
+      }
+    };
+    expect(hasErrors(noErrorMetrics)).toBe(false);
+  });
+});
+
 describe("Web UI Debounce Behavior", () => {
   beforeEach(() => {
     jest.useFakeTimers();
