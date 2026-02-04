@@ -75,7 +75,23 @@ class DataConnectorConfig {
     } catch (error) {
       console.error("Initialization error:", error);
       this.showNotification("Failed to initialize application: " + error.message, "error");
+      // Update displays with error states so user doesn't see perpetual "Loading..."
+      this.showInitError(error.message);
     }
+  }
+
+  showInitError(message) {
+    const statusDiv = document.getElementById("status");
+    if (statusDiv) {
+      statusDiv.innerHTML = `
+        <div class="status-error">
+          <h4>Initialization Error</h4>
+          <p class="error-text">${this.escapeHtml(message)}</p>
+          <p class="help-text">Please check that the plugin is properly configured and restart.</p>
+        </div>
+      `;
+    }
+    this.showMetricsError("Plugin initialization failed");
   }
 
   async checkServerMode() {
@@ -99,15 +115,24 @@ class DataConnectorConfig {
 
       if (deltaResponse.ok) {
         this.deltaTimerConfig = await deltaResponse.json();
+      } else {
+        console.warn(`Delta timer config returned ${deltaResponse.status}`);
       }
       if (subResponse.ok) {
         this.subscriptionConfig = await subResponse.json();
+      } else {
+        console.warn(`Subscription config returned ${subResponse.status}`);
       }
       if (filterResponse.ok) {
         this.sentenceFilterConfig = await filterResponse.json();
+      } else {
+        console.warn(`Sentence filter config returned ${filterResponse.status}`);
       }
+      this.configLoaded = true;
     } catch (error) {
+      console.error("Error loading configurations:", error.message);
       this.showNotification("Error loading configurations: " + error.message, "error");
+      this.configLoaded = false;
     }
   }
 
@@ -354,9 +379,43 @@ class DataConnectorConfig {
       if (response.ok) {
         const metrics = await response.json();
         this.updateMetricsDisplay(metrics);
+      } else {
+        console.error(`Metrics API returned ${response.status}: ${response.statusText}`);
+        this.showMetricsError(`Failed to load metrics (${response.status})`);
       }
     } catch (error) {
       console.error("Error loading metrics:", error.message);
+      this.showMetricsError(`Connection error: ${error.message}`);
+    }
+  }
+
+  showMetricsError(message) {
+    const metricsDiv = document.getElementById("metrics");
+    if (metricsDiv) {
+      metricsDiv.innerHTML = `
+        <div class="metrics-error">
+          <p class="error-text">${this.escapeHtml(message)}</p>
+          <p class="help-text">Check that the plugin is running and configured correctly.</p>
+        </div>
+      `;
+    }
+
+    const bandwidthDiv = document.getElementById("bandwidth");
+    if (bandwidthDiv) {
+      bandwidthDiv.innerHTML = `
+        <div class="bandwidth-error">
+          <p class="error-text">Unable to load bandwidth data</p>
+        </div>
+      `;
+    }
+
+    const pathDiv = document.getElementById("pathAnalytics");
+    if (pathDiv) {
+      pathDiv.innerHTML = `
+        <div class="path-analytics-error">
+          <p class="error-text">Unable to load path analytics</p>
+        </div>
+      `;
     }
   }
 
@@ -381,6 +440,17 @@ class DataConnectorConfig {
     // Update general metrics
     const metricsDiv = document.getElementById("metrics");
     if (!metricsDiv) {
+      return;
+    }
+
+    // Check if metrics data is valid
+    if (!metrics || !metrics.stats || !metrics.status || !metrics.uptime) {
+      metricsDiv.innerHTML = `
+        <div class="metrics-empty">
+          <p>Waiting for metrics data...</p>
+          <p class="help-text">Metrics will appear once the plugin is fully initialized.</p>
+        </div>
+      `;
       return;
     }
 
@@ -468,7 +538,16 @@ class DataConnectorConfig {
 
   updateBandwidthDisplay(metrics) {
     const bandwidthDiv = document.getElementById("bandwidth");
-    if (!bandwidthDiv || !metrics.bandwidth) {
+    if (!bandwidthDiv) {
+      return;
+    }
+    if (!metrics || !metrics.bandwidth) {
+      bandwidthDiv.innerHTML = `
+        <div class="bandwidth-empty">
+          <p>No bandwidth data available yet.</p>
+          <p class="help-text">Data will appear once transmission begins.</p>
+        </div>
+      `;
       return;
     }
 
@@ -570,7 +649,16 @@ class DataConnectorConfig {
 
   updatePathAnalyticsDisplay(metrics) {
     const pathDiv = document.getElementById("pathAnalytics");
-    if (!pathDiv || !metrics.pathStats) {
+    if (!pathDiv) {
+      return;
+    }
+    if (!metrics || !metrics.pathStats) {
+      pathDiv.innerHTML = `
+        <div class="path-analytics-empty">
+          <p>No path analytics available yet.</p>
+          <p class="help-text">Data will appear once transmission begins.</p>
+        </div>
+      `;
       return;
     }
 

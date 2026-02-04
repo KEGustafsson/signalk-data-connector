@@ -1573,7 +1573,7 @@ module.exports = function createPlugin(app) {
     }
   };
 
-// Schema using RJSF dependencies with oneOf for conditional field visibility
+  // Schema using RJSF dependencies with oneOf for conditional field visibility
   // Client-only fields appear ONLY when serverType is "client"
   // Based on: https://rjsf-team.github.io/react-jsonschema-form/docs/json-schema/dependencies/
   plugin.schema = {
