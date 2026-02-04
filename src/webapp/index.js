@@ -422,6 +422,26 @@ class DataConnectorConfig {
       </div>
     `;
 
+    // Add Smart Batching section for client mode
+    if (isClient && metrics.smartBatching) {
+      const sb = metrics.smartBatching;
+      const totalSends = sb.earlySends + sb.timerSends;
+      const earlyPercent = totalSends > 0 ? Math.round((sb.earlySends / totalSends) * 100) : 0;
+
+      metricsHtml += `
+        <div class="metrics-stats">
+          <h5>📦 Smart Batching</h5>
+          <div class="stats-grid">
+            ${renderStatItem("Avg Bytes/Delta", sb.avgBytesPerDelta + " bytes")}
+            ${renderStatItem("Max Deltas/Batch", sb.maxDeltasPerBatch)}
+            ${renderStatItem("Early Sends", sb.earlySends.toLocaleString() + " (" + earlyPercent + "%)")}
+            ${renderStatItem("Timer Sends", sb.timerSends.toLocaleString())}
+            ${renderStatItem("Oversized Packets", sb.oversizedPackets, sb.oversizedPackets > 0)}
+          </div>
+        </div>
+      `;
+    }
+
     if (metrics.lastError) {
       const timeAgo = metrics.lastError.timeAgo;
       const timeAgoStr = timeAgo < 60000

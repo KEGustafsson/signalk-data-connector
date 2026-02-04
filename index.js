@@ -59,6 +59,13 @@ module.exports = function createPlugin(app) {
   const UDP_RETRY_DELAY = 100; // milliseconds - base retry delay
   const CONTENT_HASH_ALGORITHM = "md5"; // Faster than SHA-256 for file change detection
 
+  // Smart batching constants - prevent UDP packets from exceeding MTU
+  const SMART_BATCH_SAFETY_MARGIN = 0.85; // Target 85% of MTU (leaves room for variance)
+  const SMART_BATCH_SMOOTHING = 0.2; // Rolling average weight (20% new, 80% old)
+  const SMART_BATCH_INITIAL_ESTIMATE = 200; // Initial bytes-per-delta estimate
+  const SMART_BATCH_MIN_DELTAS = 1; // Always allow at least 1 delta per packet
+  const SMART_BATCH_MAX_DELTAS = 50; // Cap to prevent excessive batching latency
+
   const plugin = {};
   plugin.id = "signalk-data-connector";
   plugin.name = "Signal K Data Connector";
@@ -78,6 +85,12 @@ module.exports = function createPlugin(app) {
   let timer = false;
   let pluginOptions; // Store options for access in event handlers
   let lastPacketTime = 0; // Track last packet send time for hello message suppression
+
+  // Smart batching state - dynamically adjusts batch size to keep packets under MTU
+  let avgBytesPerDelta = SMART_BATCH_INITIAL_ESTIMATE; // Rolling average of bytes per delta
+  let maxDeltasPerBatch = Math.floor(
+    (MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN) / SMART_BATCH_INITIAL_ESTIMATE
+  ); // Calculated limit
 
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
@@ -136,7 +149,17 @@ module.exports = function createPlugin(app) {
       history: new CircularBuffer(BANDWIDTH_HISTORY_MAX) // Efficient circular buffer
     },
     // Path-level analytics
-    pathStats: new Map() // path -> { count, bytes, lastUpdate }
+    pathStats: new Map(), // path -> { count, bytes, lastUpdate }
+    // Smart batching metrics
+    smartBatching: {
+      earlySends: 0, // Sends triggered by reaching predicted batch limit
+      timerSends: 0, // Sends triggered by timer
+      oversizedPackets: 0, // Packets that exceeded MTU despite prediction
+      avgBytesPerDelta: SMART_BATCH_INITIAL_ESTIMATE,
+      maxDeltasPerBatch: Math.floor(
+        (MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN) / SMART_BATCH_INITIAL_ESTIMATE
+      )
+    }
   };
 
   // eslint-disable-next-line no-unused-vars
@@ -482,7 +505,24 @@ module.exports = function createPlugin(app) {
 
                 deltas.push(delta);
                 setImmediate(() => app.reportOutputMessages());
-                if (timer) {
+
+                // Smart batching: send early if batch reaches predicted size limit
+                if (deltas.length >= maxDeltasPerBatch) {
+                  app.debug(
+                    `Smart batch: sending ${deltas.length} deltas (reached predicted limit of ${maxDeltasPerBatch})`
+                  );
+                  metrics.smartBatching.earlySends++;
+                  packCrypt(
+                    deltas,
+                    pluginOptions.secretKey,
+                    pluginOptions.udpAddress,
+                    pluginOptions.udpPort
+                  );
+                  deltas = [];
+                  timer = false;
+                } else if (timer) {
+                  // Timer-based send (normal path)
+                  metrics.smartBatching.timerSends++;
                   packCrypt(
                     deltas,
                     pluginOptions.secretKey,
@@ -856,6 +896,15 @@ module.exports = function createPlugin(app) {
         })(),
         pathStats: pathStatsArray,
         pathCategories: PATH_CATEGORIES,
+        smartBatching: isServerMode
+          ? null
+          : {
+            earlySends: metrics.smartBatching.earlySends,
+            timerSends: metrics.smartBatching.timerSends,
+            oversizedPackets: metrics.smartBatching.oversizedPackets,
+            avgBytesPerDelta: metrics.smartBatching.avgBytesPerDelta,
+            maxDeltasPerBatch: metrics.smartBatching.maxDeltasPerBatch
+          },
         lastError: metrics.lastError
           ? {
             message: metrics.lastError,
@@ -883,6 +932,83 @@ module.exports = function createPlugin(app) {
       res.json({
         total: paths.length,
         categories: categorized
+      });
+    });
+
+    // Plugin configuration endpoint - get current config
+    router.get("/plugin-config", rateLimitMiddleware, (req, res) => {
+      try {
+        // Get current plugin configuration from SignalK
+        const pluginConfig = app.readPluginOptions();
+        res.json({
+          success: true,
+          configuration: pluginConfig.configuration || {}
+        });
+      } catch (error) {
+        app.error(`Error reading plugin config: ${error.message}`);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Plugin configuration endpoint - save config
+    router.post("/plugin-config", rateLimitMiddleware, async (req, res) => {
+      // Validate Content-Type
+      const contentType = req.headers["content-type"];
+      if (!contentType || !contentType.includes("application/json")) {
+        return res.status(415).json({ success: false, error: "Content-Type must be application/json" });
+      }
+
+      try {
+        const newConfig = req.body;
+
+        // Validate required fields
+        if (!newConfig.serverType) {
+          return res.status(400).json({ success: false, error: "serverType is required" });
+        }
+        if (!newConfig.udpPort || newConfig.udpPort < 1024 || newConfig.udpPort > 65535) {
+          return res.status(400).json({ success: false, error: "Valid udpPort (1024-65535) is required" });
+        }
+        if (!newConfig.secretKey || newConfig.secretKey.length !== 32) {
+          return res.status(400).json({ success: false, error: "secretKey must be exactly 32 characters" });
+        }
+
+        // Validate client-specific fields
+        if (newConfig.serverType === "client") {
+          if (!newConfig.udpAddress) {
+            return res.status(400).json({ success: false, error: "udpAddress is required in client mode" });
+          }
+          if (!newConfig.testAddress) {
+            return res.status(400).json({ success: false, error: "testAddress is required in client mode" });
+          }
+          if (!newConfig.testPort) {
+            return res.status(400).json({ success: false, error: "testPort is required in client mode" });
+          }
+        }
+
+        // Save configuration using SignalK API
+        app.savePluginOptions({ configuration: newConfig }, (err) => {
+          if (err) {
+            app.error(`Error saving plugin config: ${err.message}`);
+            res.status(500).json({ success: false, error: err.message });
+          } else {
+            res.json({
+              success: true,
+              message: "Configuration saved. Restart plugin to apply changes.",
+              requiresRestart: true
+            });
+          }
+        });
+      } catch (error) {
+        app.error(`Error saving plugin config: ${error.message}`);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Get schema for configuration UI
+    router.get("/plugin-schema", rateLimitMiddleware, (req, res) => {
+      res.json({
+        schema: plugin.schema,
+        currentMode: isServerMode ? "server" : "client"
       });
     });
 
@@ -1172,6 +1298,7 @@ module.exports = function createPlugin(app) {
           `Warning: Packet size ${packet.length} bytes exceeds safe MTU (${MAX_SAFE_UDP_PAYLOAD}), may fragment. ` +
             "Consider reducing delta timer interval or filtering paths."
         );
+        metrics.smartBatching.oversizedPackets++;
       }
 
       // Track bandwidth
@@ -1181,6 +1308,31 @@ module.exports = function createPlugin(app) {
       // Send packet
       await udpSendAsync(packet, udpAddress, udpPort);
       metrics.deltasSent++;
+
+      // Update smart batching model after successful send
+      const deltaCount = Array.isArray(delta) ? delta.length : 1;
+      const bytesPerDelta = packet.length / deltaCount;
+
+      // Update rolling average using exponential smoothing
+      avgBytesPerDelta =
+        (1 - SMART_BATCH_SMOOTHING) * avgBytesPerDelta + SMART_BATCH_SMOOTHING * bytesPerDelta;
+
+      // Recalculate max deltas for next batch based on updated average
+      const targetSize = MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN;
+      maxDeltasPerBatch = Math.floor(targetSize / avgBytesPerDelta);
+      maxDeltasPerBatch = Math.max(
+        SMART_BATCH_MIN_DELTAS,
+        Math.min(SMART_BATCH_MAX_DELTAS, maxDeltasPerBatch)
+      );
+
+      // Update metrics for monitoring
+      metrics.smartBatching.avgBytesPerDelta = Math.round(avgBytesPerDelta);
+      metrics.smartBatching.maxDeltasPerBatch = maxDeltasPerBatch;
+
+      app.debug(
+        `Smart batch: ${deltaCount} deltas, ${packet.length} bytes (${bytesPerDelta.toFixed(0)} bytes/delta), ` +
+          `avg=${avgBytesPerDelta.toFixed(0)}, nextMaxDeltas=${maxDeltasPerBatch}`
+      );
 
       // Update last packet time for hello message suppression
       lastPacketTime = Date.now();
@@ -1421,146 +1573,103 @@ module.exports = function createPlugin(app) {
     }
   };
 
+// Schema using RJSF dependencies with oneOf for conditional field visibility
+  // Client-only fields appear ONLY when serverType is "client"
+  // Based on: https://rjsf-team.github.io/react-jsonschema-form/docs/json-schema/dependencies/
   plugin.schema = {
     type: "object",
-    title: "SignalK Data Connector Configuration",
-    description:
-      "Configure encrypted UDP data transmission between SignalK units with compression and connectivity monitoring",
-    required: ["udpPort", "secretKey"],
+    title: "SignalK Data Connector",
+    description: "Configure encrypted UDP data transmission between SignalK units",
+    required: ["serverType", "udpPort", "secretKey"],
     properties: {
       serverType: {
         type: "string",
-        default: "client",
         title: "Operation Mode",
-        description:
-          "Select the operation mode for this plugin instance. Server mode receives and processes data from clients. Client mode sends data to a server.",
+        description: "Select Server to receive data, or Client to send data",
+        default: "client",
         enum: ["server", "client"],
         enumNames: ["Server Mode - Receive Data", "Client Mode - Send Data"]
       },
       udpPort: {
         type: "number",
-        title: "UDP Port Number",
-        description:
-          "The UDP port used for data transmission. Both server and client must use the same port number.",
+        title: "UDP Port",
+        description: "UDP port for data transmission (must match on both ends)",
         default: 4446,
         minimum: 1024,
-        maximum: 65535,
-        examples: [4446, 8080, 9090]
+        maximum: 65535
       },
       secretKey: {
         type: "string",
-        title: "Encryption Secret Key",
-        description:
-          "A 32-character secret key used for AES encryption/decryption. Both server and client must use the identical key for secure communication.",
+        title: "Encryption Key",
+        description: "32-character secret key (must match on both ends)",
         minLength: 32,
-        maxLength: 32,
-        pattern: "^[A-Za-z0-9!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>\\/?]{32}$",
-        examples: ["MySecretKey123456789012345678901", "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"]
-      },
-      helloMessageSender: {
-        type: "integer",
-        default: 60,
-        title: "Vessel Data Broadcast Interval",
-        description:
-          "How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds.",
-        minimum: 10,
-        maximum: 3600,
-        examples: [30, 60, 120, 300]
-      },
-      udpAddress: {
-        type: "string",
-        title: "Destination Server Address",
-        description:
-          "IP address or hostname of the SignalK server to send data to. Use the server's network address.",
-        default: "127.0.0.1",
-        pattern:
-          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
-        examples: ["192.168.1.100", "10.0.0.50", "signalk.mydomain.com", "localhost"]
-      },
-      testAddress: {
-        type: "string",
-        title: "Connectivity Test Target",
-        description:
-          "IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service (e.g., router, DNS server, or web server).",
-        default: "127.0.0.1",
-        pattern:
-          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
-        examples: ["8.8.8.8", "192.168.1.1", "google.com", "1.1.1.1"]
-      },
-      testPort: {
-        type: "number",
-        title: "Connectivity Test Port",
-        description:
-          "TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS), 22 (SSH).",
-        default: 80,
-        minimum: 1,
-        maximum: 65535,
-        examples: [80, 443, 53, 22, 8080]
-      },
-      pingIntervalTime: {
-        type: "number",
-        title: "Connectivity Check Interval",
-        description:
-          "How often to test network connectivity (minutes). Data transmission is paused when connectivity fails. Recommended: 1-5 minutes for reliable networks.",
-        default: 1,
-        minimum: 0.1,
-        maximum: 60,
-        examples: [0.5, 1, 2, 5, 10]
+        maxLength: 32
       },
       useMsgpack: {
         type: "boolean",
-        title: "Use MessagePack Serialization",
-        description:
-          "Enable MessagePack binary serialization instead of JSON. Provides 15-25% smaller payloads. Both client and server must use the same setting.",
+        title: "Use MessagePack",
+        description: "Binary serialization for smaller payloads (must match on both ends)",
         default: false
       },
       usePathDictionary: {
         type: "boolean",
-        title: "Use Path Dictionary Encoding",
-        description:
-          "Replace common SignalK paths with short numeric IDs. Provides 10-20% bandwidth reduction. Both client and server must use the same setting.",
+        title: "Use Path Dictionary",
+        description: "Encode paths as numeric IDs for bandwidth savings (must match on both ends)",
         default: false
       }
     },
-    additionalProperties: false,
-    if: {
-      properties: {
-        serverType: { const: "client" }
-      }
-    },
-    then: {
-      required: ["udpPort", "secretKey", "udpAddress", "testAddress", "testPort"],
-      properties: {
-        helloMessageSender: {
-          description:
-            "CLIENT ONLY: How often to send vessel identification and static data to maintain UDP connection (seconds). Recommended: 30-300 seconds."
-        },
-        udpAddress: {
-          description:
-            "CLIENT ONLY: IP address or hostname of the SignalK server to send data to. Use the server's network address."
-        },
-        testAddress: {
-          description:
-            "CLIENT ONLY: IP address or hostname to test network connectivity before sending data. Should be a reliable, always-available service."
-        },
-        testPort: {
-          description:
-            "CLIENT ONLY: TCP port number to test connectivity on the target address. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS)."
-        },
-        pingIntervalTime: {
-          description:
-            "CLIENT ONLY: How often to test network connectivity (minutes). Data transmission is paused when connectivity fails."
-        }
-      }
-    },
-    else: {
-      required: ["udpPort", "secretKey"],
-      properties: {
-        helloMessageSender: false,
-        udpAddress: false,
-        testAddress: false,
-        testPort: false,
-        pingIntervalTime: false
+    // Client-only fields are defined ONLY inside oneOf, not in main properties
+    dependencies: {
+      serverType: {
+        oneOf: [
+          {
+            properties: {
+              serverType: { enum: ["server"] }
+            }
+          },
+          {
+            properties: {
+              serverType: { enum: ["client"] },
+              udpAddress: {
+                type: "string",
+                title: "Server Address",
+                description: "IP address or hostname of the SignalK server",
+                default: "127.0.0.1"
+              },
+              helloMessageSender: {
+                type: "integer",
+                title: "Heartbeat Interval (seconds)",
+                description: "How often to send heartbeat messages",
+                default: 60,
+                minimum: 10,
+                maximum: 3600
+              },
+              testAddress: {
+                type: "string",
+                title: "Connectivity Test Address",
+                description: "Address to ping for network testing (e.g., 8.8.8.8)",
+                default: "127.0.0.1"
+              },
+              testPort: {
+                type: "number",
+                title: "Connectivity Test Port",
+                description: "Port for connectivity test (80, 443, 53)",
+                default: 80,
+                minimum: 1,
+                maximum: 65535
+              },
+              pingIntervalTime: {
+                type: "number",
+                title: "Check Interval (minutes)",
+                description: "How often to test network connectivity",
+                default: 1,
+                minimum: 0.1,
+                maximum: 60
+              }
+            },
+            required: ["udpAddress", "testAddress", "testPort"]
+          }
+        ]
       }
     }
   };
