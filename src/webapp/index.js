@@ -77,6 +77,8 @@ class DataConnectorConfig {
       this.showNotification("Failed to initialize application: " + error.message, "error");
       // Update displays with error states so user doesn't see perpetual "Loading..."
       this.showInitError(error.message);
+      // Still start the refresh interval so dashboard recovers when plugin becomes available
+      this.startMetricsRefresh();
     }
   }
 
