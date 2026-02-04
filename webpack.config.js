@@ -49,12 +49,14 @@ module.exports = (env, argv) => {
         },
         shared: {
           react: {
-            singleton: false,
-            strictVersion: true
+            singleton: true,
+            eager: false,
+            requiredVersion: false
           },
           "react-dom": {
-            singleton: false,
-            strictVersion: true
+            singleton: true,
+            eager: false,
+            requiredVersion: false
           }
         }
       }),
