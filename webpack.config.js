@@ -6,13 +6,12 @@ const CopyWebpackPlugin = require("copy-webpack-plugin");
 const { ModuleFederationPlugin } = webpack.container;
 const packageJson = require("./package.json");
 
-const mfName = packageJson.name.replace(/[-@/]/g, "_");
-
 module.exports = (env, argv) => {
   const isProduction = argv.mode === "production";
 
   return {
-    entry: "./src/index.js",
+    // IMPORTANT: webapp is the runtime entry
+    entry: "./src/webapp/index.js",
 
     mode: isProduction ? "production" : "development",
 
@@ -51,23 +50,31 @@ module.exports = (env, argv) => {
 
     plugins: [
       new ModuleFederationPlugin({
-        name: mfName,
+        // MUST NOT contain spaces
+        name: "signalk_data_connector",
+
         library: {
           type: "var",
-          name: mfName
+          name: packageJson.name.replace(/[-@/]/g, "_")
         },
+
         filename: "remoteEntry.js",
+
         exposes: {
           "./PluginConfigurationPanel": "./src/components/PluginConfigurationPanel"
         },
-        shared: {
-          react: { singleton: false, strictVersion: true },
-          "react-dom": { singleton: false, strictVersion: true }
-        }
-      }),
 
-      new webpack.WatchIgnorePlugin({
-        paths: [path.resolve(__dirname, "public/")]
+        // CRITICAL FIX
+        shared: {
+          react: {
+            singleton: true,
+            requiredVersion: packageJson.dependencies.react
+          },
+          "react-dom": {
+            singleton: true,
+            requiredVersion: packageJson.dependencies["react-dom"]
+          }
+        }
       }),
 
       new HtmlWebpackPlugin({

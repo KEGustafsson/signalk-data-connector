@@ -6,6 +6,3 @@
 
 // Export the configuration panel component for Module Federation
 export { default as PluginConfigurationPanel } from "./components/PluginConfigurationPanel";
-
-// Import and initialize the webapp
-import "./webapp/index.js";
