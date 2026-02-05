@@ -10,11 +10,18 @@ module.exports = (env, argv) => {
   const isProduction = argv.mode === "production";
 
   return {
-    entry: "./src/index",
+    // IMPORTANT: webapp is the runtime entry
+    entry: "./src/webapp/index.js",
+
     mode: isProduction ? "production" : "development",
+
     output: {
-      path: path.resolve(__dirname, "public")
+      path: path.resolve(__dirname, "public"),
+      filename: isProduction ? "[name].[contenthash].js" : "[name].js",
+      clean: true,
+      publicPath: "auto"
     },
+
     module: {
       rules: [
         {
@@ -29,7 +36,10 @@ module.exports = (env, argv) => {
         },
         {
           test: /\.css$/,
-          use: [isProduction ? MiniCssExtractPlugin.loader : "style-loader", "css-loader"]
+          use: [
+            isProduction ? MiniCssExtractPlugin.loader : "style-loader",
+            "css-loader"
+          ]
         },
         {
           test: /\.(png|jpg|gif|svg)$/,
@@ -37,36 +47,42 @@ module.exports = (env, argv) => {
         }
       ]
     },
+
     plugins: [
       new ModuleFederationPlugin({
-        name: "SignalK Data Connector",
+        // MUST NOT contain spaces
+        name: "signalk_data_connector",
+
         library: {
           type: "var",
           name: packageJson.name.replace(/[-@/]/g, "_")
         },
+
         filename: "remoteEntry.js",
+
         exposes: {
           "./PluginConfigurationPanel": "./src/components/PluginConfigurationPanel"
         },
+
+        // CRITICAL FIX
         shared: {
           react: {
-            singleton: false,
-            strictVersion: true
+            singleton: true,
+            requiredVersion: packageJson.dependencies.react
           },
           "react-dom": {
-            singleton: false,
-            strictVersion: true
+            singleton: true,
+            requiredVersion: packageJson.dependencies["react-dom"]
           }
         }
       }),
-      new webpack.WatchIgnorePlugin({
-        paths: [path.resolve(__dirname, "public/")]
-      }),
+
       new HtmlWebpackPlugin({
         template: "./src/webapp/index.html",
         filename: "index.html",
         title: "SignalK Data Connector Configuration"
       }),
+
       new CopyWebpackPlugin({
         patterns: [
           {
@@ -76,15 +92,18 @@ module.exports = (env, argv) => {
           }
         ]
       }),
+
       ...(isProduction
         ? [
-          new MiniCssExtractPlugin({
-            filename: "[name].[contenthash].css"
-          })
-        ]
+            new MiniCssExtractPlugin({
+              filename: "[name].[contenthash].css"
+            })
+          ]
         : [])
     ],
+
     devtool: isProduction ? "source-map" : "eval-source-map",
+
     resolve: {
       extensions: [".js", ".jsx", ".json"]
     }
