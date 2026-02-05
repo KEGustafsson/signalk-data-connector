@@ -556,9 +556,3 @@ Examples:
 MIT License - Copyright (c) 2024 Karl-Erik Gustafsson
 
 See [LICENSE](LICENSE) file for details.
-
-## Support
-
-- **GitHub Issues**: https://github.com/KEGustafsson/signalk-data-connector/issues
-- **SignalK Forums**: https://signalk.org/community
-- **Documentation**: This README + inline JSDoc comments
