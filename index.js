@@ -935,6 +935,83 @@ module.exports = function createPlugin(app) {
       });
     });
 
+    // Plugin configuration endpoint - get current config
+    router.get("/plugin-config", rateLimitMiddleware, (req, res) => {
+      try {
+        // Get current plugin configuration from SignalK
+        const pluginConfig = app.readPluginOptions();
+        res.json({
+          success: true,
+          configuration: pluginConfig.configuration || {}
+        });
+      } catch (error) {
+        app.error(`Error reading plugin config: ${error.message}`);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Plugin configuration endpoint - save config
+    router.post("/plugin-config", rateLimitMiddleware, async (req, res) => {
+      // Validate Content-Type
+      const contentType = req.headers["content-type"];
+      if (!contentType || !contentType.includes("application/json")) {
+        return res.status(415).json({ success: false, error: "Content-Type must be application/json" });
+      }
+
+      try {
+        const newConfig = req.body;
+
+        // Validate required fields
+        if (!newConfig.serverType) {
+          return res.status(400).json({ success: false, error: "serverType is required" });
+        }
+        if (!newConfig.udpPort || newConfig.udpPort < 1024 || newConfig.udpPort > 65535) {
+          return res.status(400).json({ success: false, error: "Valid udpPort (1024-65535) is required" });
+        }
+        if (!newConfig.secretKey || newConfig.secretKey.length !== 32) {
+          return res.status(400).json({ success: false, error: "secretKey must be exactly 32 characters" });
+        }
+
+        // Validate client-specific fields
+        if (newConfig.serverType === "client") {
+          if (!newConfig.udpAddress) {
+            return res.status(400).json({ success: false, error: "udpAddress is required in client mode" });
+          }
+          if (!newConfig.testAddress) {
+            return res.status(400).json({ success: false, error: "testAddress is required in client mode" });
+          }
+          if (!newConfig.testPort) {
+            return res.status(400).json({ success: false, error: "testPort is required in client mode" });
+          }
+        }
+
+        // Save configuration using SignalK API
+        app.savePluginOptions({ configuration: newConfig }, (err) => {
+          if (err) {
+            app.error(`Error saving plugin config: ${err.message}`);
+            res.status(500).json({ success: false, error: err.message });
+          } else {
+            res.json({
+              success: true,
+              message: "Configuration saved. Restart plugin to apply changes.",
+              requiresRestart: true
+            });
+          }
+        });
+      } catch (error) {
+        app.error(`Error saving plugin config: ${error.message}`);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // Get schema for configuration UI
+    router.get("/plugin-schema", rateLimitMiddleware, (req, res) => {
+      res.json({
+        schema: plugin.schema,
+        currentMode: isServerMode ? "server" : "client"
+      });
+    });
+
     /**
      * Middleware to check client mode and storage initialization
      */
@@ -1496,138 +1573,104 @@ module.exports = function createPlugin(app) {
     }
   };
 
-// Dynamic schema function - returns different schema based on current configuration
-  // Server mode shows only server-relevant settings, client mode shows client-relevant settings
-  plugin.schema = function (existingConfig) {
-    const isServer = existingConfig?.serverType === "server";
-
-    // Common properties for both modes
-    const commonProperties = {
+// Schema using RJSF dependencies with oneOf for conditional field visibility
+  // Client-only fields appear ONLY when serverType is "client"
+  // Based on: https://rjsf-team.github.io/react-jsonschema-form/docs/json-schema/dependencies/
+  plugin.schema = {
+    type: "object",
+    title: "SignalK Data Connector",
+    description: "Configure encrypted UDP data transmission between SignalK units",
+    required: ["serverType", "udpPort", "secretKey"],
+    properties: {
       serverType: {
         type: "string",
-        default: "client",
         title: "Operation Mode",
-        description: isServer
-          ? "Currently in SERVER mode - receiving and processing data from clients."
-          : "Currently in CLIENT mode - sending data to a server.",
+        description: "Select Server to receive data, or Client to send data",
+        default: "client",
         enum: ["server", "client"],
         enumNames: ["Server Mode - Receive Data", "Client Mode - Send Data"]
       },
       udpPort: {
         type: "number",
-        title: "UDP Port Number",
-        description: isServer
-          ? "The UDP port to listen on for incoming data from clients."
-          : "The UDP port to send data to on the server.",
+        title: "UDP Port",
+        description: "UDP port for data transmission (must match on both ends)",
         default: 4446,
         minimum: 1024,
-        maximum: 65535,
-        examples: [4446, 8080, 9090]
+        maximum: 65535
       },
       secretKey: {
         type: "string",
-        title: "Encryption Secret Key",
-        description:
-          "A 32-character secret key used for AES encryption/decryption. Both server and client must use the identical key.",
+        title: "Encryption Key",
+        description: "32-character secret key (must match on both ends)",
         minLength: 32,
-        maxLength: 32,
-        pattern: "^[A-Za-z0-9!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>\\/?]{32}$",
-        examples: ["MySecretKey123456789012345678901", "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"]
+        maxLength: 32
       },
       useMsgpack: {
         type: "boolean",
-        title: "Use MessagePack Serialization",
-        description:
-          "Enable MessagePack binary serialization instead of JSON. Provides 15-25% smaller payloads. Both client and server must use the same setting.",
+        title: "Use MessagePack",
+        description: "Binary serialization for smaller payloads (must match on both ends)",
         default: false
       },
       usePathDictionary: {
         type: "boolean",
-        title: "Use Path Dictionary Encoding",
-        description:
-          "Replace common SignalK paths with short numeric IDs. Provides 10-20% bandwidth reduction. Both client and server must use the same setting.",
+        title: "Use Path Dictionary",
+        description: "Encode paths as numeric IDs for bandwidth savings (must match on both ends)",
         default: false
       }
-    };
-
-    // Client-only properties
-    const clientProperties = {
-      udpAddress: {
-        type: "string",
-        title: "Destination Server Address",
-        description:
-          "IP address or hostname of the SignalK server to send data to.",
-        default: "127.0.0.1",
-        pattern:
-          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
-        examples: ["192.168.1.100", "10.0.0.50", "signalk.mydomain.com"]
-      },
-      helloMessageSender: {
-        type: "integer",
-        default: 60,
-        title: "Heartbeat Interval (seconds)",
-        description:
-          "How often to send heartbeat messages to maintain the UDP connection. Recommended: 30-300 seconds.",
-        minimum: 10,
-        maximum: 3600,
-        examples: [30, 60, 120, 300]
-      },
-      testAddress: {
-        type: "string",
-        title: "Connectivity Test Target",
-        description:
-          "IP address or hostname to test network connectivity before sending data (e.g., router, DNS server).",
-        default: "127.0.0.1",
-        pattern:
-          "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$",
-        examples: ["8.8.8.8", "192.168.1.1", "google.com", "1.1.1.1"]
-      },
-      testPort: {
-        type: "number",
-        title: "Connectivity Test Port",
-        description:
-          "TCP port to test connectivity. Common ports: 80 (HTTP), 443 (HTTPS), 53 (DNS).",
-        default: 80,
-        minimum: 1,
-        maximum: 65535,
-        examples: [80, 443, 53, 22]
-      },
-      pingIntervalTime: {
-        type: "number",
-        title: "Connectivity Check Interval (minutes)",
-        description:
-          "How often to test network connectivity. Data transmission pauses when connectivity fails.",
-        default: 1,
-        minimum: 0.1,
-        maximum: 60,
-        examples: [0.5, 1, 2, 5]
+    },
+    // Client-only fields are defined ONLY inside oneOf, not in main properties
+    dependencies: {
+      serverType: {
+        oneOf: [
+          {
+            properties: {
+              serverType: { enum: ["server"] }
+            }
+          },
+          {
+            properties: {
+              serverType: { enum: ["client"] },
+              udpAddress: {
+                type: "string",
+                title: "Server Address",
+                description: "IP address or hostname of the SignalK server",
+                default: "127.0.0.1"
+              },
+              helloMessageSender: {
+                type: "integer",
+                title: "Heartbeat Interval (seconds)",
+                description: "How often to send heartbeat messages",
+                default: 60,
+                minimum: 10,
+                maximum: 3600
+              },
+              testAddress: {
+                type: "string",
+                title: "Connectivity Test Address",
+                description: "Address to ping for network testing (e.g., 8.8.8.8)",
+                default: "127.0.0.1"
+              },
+              testPort: {
+                type: "number",
+                title: "Connectivity Test Port",
+                description: "Port for connectivity test (80, 443, 53)",
+                default: 80,
+                minimum: 1,
+                maximum: 65535
+              },
+              pingIntervalTime: {
+                type: "number",
+                title: "Check Interval (minutes)",
+                description: "How often to test network connectivity",
+                default: 1,
+                minimum: 0.1,
+                maximum: 60
+              }
+            },
+            required: ["udpAddress", "testAddress", "testPort"]
+          }
+        ]
       }
-    };
-
-    // Build schema based on mode
-    if (isServer) {
-      // Server mode: show only server-relevant settings
-      return {
-        type: "object",
-        title: "SignalK Data Connector - Server Mode",
-        description: "Receive encrypted UDP data from remote SignalK clients.",
-        required: ["udpPort", "secretKey"],
-        properties: commonProperties,
-        additionalProperties: false
-      };
-    } else {
-      // Client mode: show all client settings
-      return {
-        type: "object",
-        title: "SignalK Data Connector - Client Mode",
-        description: "Send encrypted UDP data to a remote SignalK server.",
-        required: ["udpPort", "secretKey", "udpAddress", "testAddress", "testPort"],
-        properties: {
-          ...commonProperties,
-          ...clientProperties
-        },
-        additionalProperties: false
-      };
     }
   };
 
