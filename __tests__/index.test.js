@@ -119,6 +119,10 @@ describe("SignalK Data Connector Plugin", () => {
       expect(serverDep.properties.udpAddress).toBeUndefined();
       expect(serverDep.properties.testAddress).toBeUndefined();
     });
+
+    test("should disallow additional properties", () => {
+      expect(plugin.schema.additionalProperties).toBe(false);
+    });
   });
 
   describe("Plugin Start - Validation", () => {
@@ -523,6 +527,138 @@ describe("SignalK Data Connector Plugin", () => {
       await runWithMiddlewares(getMiddlewares, getHandler, mockReq, mockRes);
 
       expect(mockRes.status).not.toHaveBeenCalledWith(400);
+    });
+  });
+
+  describe("Plugin Config Save Route", () => {
+    let mockRouter;
+    let pluginConfigPostHandler;
+    let pluginConfigPostMiddlewares;
+
+    beforeEach(() => {
+      mockApp.savePluginOptions = jest.fn((config, cb) => cb(null));
+      mockApp.readPluginOptions = jest.fn(() => ({
+        configuration: { serverType: "client", udpPort: 4446, secretKey: "12345678901234567890123456789012" }
+      }));
+
+      mockRouter = {
+        get: jest.fn(),
+        post: jest.fn((path, ...handlers) => {
+          if (path === "/plugin-config") {
+            pluginConfigPostHandler = handlers[handlers.length - 1];
+            pluginConfigPostMiddlewares = handlers.slice(0, -1);
+          }
+        })
+      };
+
+      plugin.registerWithRouter(mockRouter);
+    });
+
+    function runWithMiddlewares(middlewares, handler, req, res) {
+      return new Promise((resolve) => {
+        let currentIndex = 0;
+        const next = () => {
+          currentIndex++;
+          if (currentIndex < middlewares.length) {
+            middlewares[currentIndex](req, res, next);
+          } else {
+            Promise.resolve(handler(req, res)).then(resolve);
+          }
+        };
+        if (middlewares.length > 0) {
+          middlewares[0](req, res, next);
+        } else {
+          Promise.resolve(handler(req, res)).then(resolve);
+        }
+        setTimeout(resolve, 50);
+      });
+    }
+
+    test("should pass config directly to savePluginOptions without wrapping in configuration key", async () => {
+      const mockReq = {
+        headers: { "content-type": "application/json" },
+        body: {
+          serverType: "client",
+          udpPort: 4446,
+          secretKey: "12345678901234567890123456789012",
+          udpAddress: "192.168.1.100",
+          testAddress: "8.8.8.8",
+          testPort: 53
+        }
+      };
+      const mockRes = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn()
+      };
+
+      await runWithMiddlewares(pluginConfigPostMiddlewares, pluginConfigPostHandler, mockReq, mockRes);
+
+      expect(mockApp.savePluginOptions).toHaveBeenCalled();
+      const savedConfig = mockApp.savePluginOptions.mock.calls[0][0];
+      // Must NOT be wrapped in { configuration: ... }
+      expect(savedConfig.configuration).toBeUndefined();
+      // Must have config fields directly
+      expect(savedConfig.serverType).toBe("client");
+      expect(savedConfig.udpPort).toBe(4446);
+    });
+
+    test("should strip unknown properties from config before saving", async () => {
+      const mockReq = {
+        headers: { "content-type": "application/json" },
+        body: {
+          serverType: "client",
+          udpPort: 4446,
+          secretKey: "12345678901234567890123456789012",
+          udpAddress: "192.168.1.100",
+          testAddress: "8.8.8.8",
+          testPort: 53,
+          unknownField: "should be removed",
+          configuration: { nested: "stale data" }
+        }
+      };
+      const mockRes = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn()
+      };
+
+      await runWithMiddlewares(pluginConfigPostMiddlewares, pluginConfigPostHandler, mockReq, mockRes);
+
+      expect(mockApp.savePluginOptions).toHaveBeenCalled();
+      const savedConfig = mockApp.savePluginOptions.mock.calls[0][0];
+      expect(savedConfig.unknownField).toBeUndefined();
+      expect(savedConfig.configuration).toBeUndefined();
+      expect(savedConfig.serverType).toBe("client");
+    });
+
+    test("should strip client-only fields when saving in server mode", async () => {
+      const mockReq = {
+        headers: { "content-type": "application/json" },
+        body: {
+          serverType: "server",
+          udpPort: 4446,
+          secretKey: "12345678901234567890123456789012",
+          udpAddress: "192.168.1.100",
+          testAddress: "8.8.8.8",
+          testPort: 53,
+          helloMessageSender: 60,
+          pingIntervalTime: 1
+        }
+      };
+      const mockRes = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn()
+      };
+
+      await runWithMiddlewares(pluginConfigPostMiddlewares, pluginConfigPostHandler, mockReq, mockRes);
+
+      expect(mockApp.savePluginOptions).toHaveBeenCalled();
+      const savedConfig = mockApp.savePluginOptions.mock.calls[0][0];
+      expect(savedConfig.serverType).toBe("server");
+      expect(savedConfig.udpAddress).toBeUndefined();
+      expect(savedConfig.testAddress).toBeUndefined();
+      expect(savedConfig.testPort).toBeUndefined();
+      expect(savedConfig.helloMessageSender).toBeUndefined();
+      expect(savedConfig.pingIntervalTime).toBeUndefined();
     });
   });
 

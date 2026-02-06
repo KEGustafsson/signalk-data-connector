@@ -985,8 +985,33 @@ module.exports = function createPlugin(app) {
           }
         }
 
+        // Sanitize: only keep known configuration properties to prevent
+        // stale or unknown fields from accumulating in the saved config
+        const VALID_CONFIG_KEYS = [
+          "serverType", "udpPort", "secretKey", "useMsgpack", "usePathDictionary",
+          "udpAddress", "helloMessageSender", "testAddress", "testPort", "pingIntervalTime"
+        ];
+        const sanitizedConfig = {};
+        for (const key of VALID_CONFIG_KEYS) {
+          if (newConfig[key] !== undefined) {
+            sanitizedConfig[key] = newConfig[key];
+          }
+        }
+
+        // Remove client-only fields when saving in server mode
+        if (sanitizedConfig.serverType === "server") {
+          delete sanitizedConfig.udpAddress;
+          delete sanitizedConfig.helloMessageSender;
+          delete sanitizedConfig.testAddress;
+          delete sanitizedConfig.testPort;
+          delete sanitizedConfig.pingIntervalTime;
+        }
+
         // Save configuration using SignalK API
-        app.savePluginOptions({ configuration: newConfig }, (err) => {
+        // Note: pass config directly — SignalK's savePluginOptions wraps it
+        // under the "configuration" key automatically via shorthand property.
+        // Wrapping in { configuration: ... } here would cause double-nesting.
+        app.savePluginOptions(sanitizedConfig, (err) => {
           if (err) {
             app.error(`Error saving plugin config: ${err.message}`);
             res.status(500).json({ success: false, error: err.message });
@@ -1581,6 +1606,7 @@ module.exports = function createPlugin(app) {
     title: "SignalK Data Connector",
     description: "Configure encrypted UDP data transmission between SignalK units",
     required: ["serverType", "udpPort", "secretKey"],
+    additionalProperties: false,
     properties: {
       serverType: {
         type: "string",
