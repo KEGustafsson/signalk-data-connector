@@ -633,6 +633,37 @@ describe("SignalK Data Connector Plugin", () => {
       expect(savedConfig.serverType).toBe("client");
     });
 
+    test("should call restartPlugin after successful save", async () => {
+      // Start the plugin to set state.restartPlugin
+      const mockRestartPlugin = jest.fn();
+      await plugin.start({
+        secretKey: "12345678901234567890123456789012",
+        udpPort: 4446,
+        serverType: "server"
+      }, mockRestartPlugin);
+
+      const mockReq = {
+        headers: { "content-type": "application/json" },
+        body: {
+          serverType: "server",
+          udpPort: 4446,
+          secretKey: "12345678901234567890123456789012"
+        }
+      };
+      const mockRes = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn()
+      };
+
+      await runWithMiddlewares(pluginConfigPostMiddlewares, pluginConfigPostHandler, mockReq, mockRes);
+
+      expect(mockApp.savePluginOptions).toHaveBeenCalled();
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, restarting: true })
+      );
+      expect(mockRestartPlugin).toHaveBeenCalled();
+    });
+
     test("should strip client-only fields when saving in server mode", async () => {
       const mockReq = {
         headers: { "content-type": "application/json" },

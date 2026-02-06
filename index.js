@@ -352,8 +352,9 @@ module.exports = function createPlugin(app) {
 
   // ── Plugin lifecycle ──
 
-  plugin.start = async function (options) {
+  plugin.start = async function (options, restartPlugin) {
     state.options = options;
+    state.restartPlugin = restartPlugin;
 
     // Start rate limit cleanup
     routes.startRateLimitCleanup();
