@@ -2,7 +2,7 @@
 
 A SignalK plugin for secure, encrypted UDP data transmission with advanced bandwidth optimization.
 
-[![Tests](https://img.shields.io/badge/tests-181%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
+[![Tests](https://img.shields.io/badge/tests-209%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen)](https://nodejs.org/)
 
@@ -399,7 +399,7 @@ Enable in SignalK plugin settings to see:
 ```bash
 npm run dev          # Development build with watch mode
 npm run build        # Production build with versioning
-npm test             # Run test suite (181 tests)
+npm test             # Run test suite (209 tests)
 npm run test:watch   # Run tests in watch mode
 npm run test:coverage # Generate coverage report
 npm run lint         # Check code style
@@ -411,7 +411,7 @@ npm run format       # Format code with Prettier
 
 **Test Suite Coverage:**
 
-- ✅ 181 tests, all passing
+- ✅ 209 tests, all passing
 - ✅ Crypto module: 100% coverage (encryption, decryption, validation)
 - ✅ Path dictionary: 100% coverage (encoding, decoding)
 - ✅ Full pipeline: End-to-end tests with real compression/encryption
@@ -419,6 +419,7 @@ npm run format       # Format code with Prettier
 - ✅ Configuration: Hot-reload testing, adaptive schema validation
 - ✅ Web UI: Metrics and API endpoints
 - ✅ Network monitoring: RTT measurement and publishing
+- ✅ Integration pipe: Full input→backend→frontend flow (modules, metrics, API)
 
 **Run specific test suites:**
 
@@ -432,22 +433,48 @@ npm test -- --coverage               # With coverage report
 
 ```
 signalk-data-connector/
-├── index.js              # Main plugin (1380 lines)
-├── crypto.js             # AES-256-GCM encryption (90 lines)
-├── pathDictionary.js     # SignalK path encoding (170+ paths)
-├── src/webapp/           # Web UI source (React-free vanilla JS)
-│   ├── index.js         # Main UI logic
-│   └── styles.css       # Styling
-├── __tests__/           # Test suite (181 tests)
+├── index.js                  # Plugin entry, state, watchers, lifecycle
+├── crypto.js                 # AES-256-GCM encryption module
+├── pathDictionary.js         # SignalK path encoding (170+ paths)
+├── lib/                      # Core modules (extracted from index.js)
+│   ├── CircularBuffer.js    # Fixed-size circular buffer data structure
+│   ├── constants.js         # Shared constants and utility functions
+│   ├── metrics.js           # Metrics tracking, bandwidth rates, path analytics
+│   ├── pipeline.js          # Pack/unpack pipeline (compress, encrypt, UDP)
+│   └── routes.js            # HTTP route handlers and rate limiting
+├── src/
+│   ├── webapp/              # Web UI source (vanilla JS)
+│   │   ├── index.js        # Dashboard UI logic
+│   │   └── styles.css      # Styling
+│   └── components/          # React config panel (Module Federation)
+│       └── PluginConfigurationPanel.jsx
+├── __tests__/               # Test suite (209 tests)
 │   ├── crypto.test.js
 │   ├── pathDictionary.test.js
 │   ├── compression.test.js
 │   ├── full-pipeline.test.js
 │   ├── smartBatching.test.js
 │   ├── config.test.js
-│   └── index.test.js
-└── public/              # Built UI files (generated)
+│   ├── index.test.js
+│   ├── webapp.test.js
+│   └── integration-pipe.test.js  # Full input→backend→frontend pipe
+└── public/                  # Built UI files (generated)
 ```
+
+### Modular Architecture
+
+The plugin core is decomposed into focused modules under `lib/`:
+
+| Module | Responsibility |
+|--------|---------------|
+| `index.js` | Plugin entry point, shared state object, file watchers, lifecycle (start/stop) |
+| `lib/constants.js` | All shared constants and `calculateMaxDeltasPerBatch()` utility |
+| `lib/CircularBuffer.js` | Fixed-size circular buffer for O(1) metrics history |
+| `lib/metrics.js` | Bandwidth tracking, path analytics, error recording, `formatBytes` |
+| `lib/pipeline.js` | `packCrypt` / `unpackDecrypt` — the compress→encrypt→send / receive→decrypt→decompress pipe |
+| `lib/routes.js` | All HTTP route handlers (`/metrics`, `/config`, `/paths`, `/plugin-config`), rate limiting |
+
+Modules are wired together via factory functions that receive a shared `state` object (passed by reference), enabling cross-module state access without globals.
 
 ### Code Quality Standards
 
@@ -531,7 +558,7 @@ UDP receive
 
 **Requirements:**
 
-- ✅ All 181 tests must pass
+- ✅ All 209 tests must pass
 - ✅ No ESLint errors or warnings
 - ✅ Code formatted with Prettier
 - ✅ JSDoc comments for public functions
