@@ -302,24 +302,18 @@ module.exports = function createPlugin(app) {
     }, RATE_LIMIT_WINDOW);
   }
 
-  // Valid configuration filenames
-  const VALID_CONFIG_FILES = ["delta_timer.json", "subscription.json", "sentence_filter.json"];
-
   /**
    * Resolves a config filename to its full file path
    * @param {string} filename - Config filename (e.g., "delta_timer.json")
    * @returns {string|null} Full file path or null if invalid filename
    */
   function getConfigFilePath(filename) {
-    if (!VALID_CONFIG_FILES.includes(filename)) {
-      return null;
+    switch (filename) {
+      case "delta_timer.json": return deltaTimerFile;
+      case "subscription.json": return subscriptionFile;
+      case "sentence_filter.json": return sentenceFilterFile;
+      default: return null;
     }
-    const fileMap = {
-      "delta_timer.json": deltaTimerFile,
-      "subscription.json": subscriptionFile,
-      "sentence_filter.json": sentenceFilterFile
-    };
-    return fileMap[filename];
   }
 
   /**
@@ -1181,14 +1175,9 @@ module.exports = function createPlugin(app) {
       }
 
       // Apply path dictionary encoding if enabled
-      let processedDelta = delta;
-      if (pluginOptions.usePathDictionary) {
-        if (Array.isArray(delta)) {
-          processedDelta = delta.map((d) => encodeDelta(d));
-        } else {
-          processedDelta = encodeDelta(delta);
-        }
-      }
+      const processedDelta = pluginOptions.usePathDictionary
+        ? (Array.isArray(delta) ? delta.map(encodeDelta) : encodeDelta(delta))
+        : delta;
 
       // Serialize to buffer (JSON or MessagePack)
       const serialized = deltaBuffer(processedDelta, pluginOptions.useMsgpack);
@@ -1329,19 +1318,11 @@ module.exports = function createPlugin(app) {
           continue;
         }
 
-        // Decode path dictionary if enabled
-        if (pluginOptions.usePathDictionary) {
-          deltaMessage = decodeDelta(deltaMessage);
-        } else {
-          // Ensure source is never null/undefined even when path dictionary is disabled
-          // This prevents "Cannot set properties of null (setting 'label')" errors in SignalK
-          if (deltaMessage.updates) {
-            deltaMessage.updates = deltaMessage.updates.map((update) => ({
-              ...update,
-              source: update.source ?? {}
-            }));
-          }
-        }
+        // Decode path dictionary IDs (if enabled) and ensure source is never null/undefined
+        // decodeDelta via transformDelta always applies source ?? {}, so it handles both cases:
+        // - Path dictionary enabled: numeric IDs decoded to strings + source fixed
+        // - Path dictionary disabled: string paths pass through unchanged + source fixed
+        deltaMessage = decodeDelta(deltaMessage);
 
         // Skip if decoding returned null
         if (deltaMessage === null || deltaMessage === undefined) {
