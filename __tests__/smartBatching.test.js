@@ -1,6 +1,6 @@
 /* eslint-disable no-undef */
 const zlib = require("zlib");
-const { encryptBinary, decryptBinary } = require("../crypto");
+const { encryptBinary, decryptBinary } = require("../lib/crypto");
 
 describe("Smart Batching", () => {
   const validSecretKey = "12345678901234567890123456789012";

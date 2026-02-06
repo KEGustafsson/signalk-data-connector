@@ -376,11 +376,11 @@ The plugin core is decomposed into focused modules:
 | `index.js` | Plugin entry point, shared state, file watchers, lifecycle |
 | `lib/constants.js` | Shared constants and batch size calculation |
 | `lib/CircularBuffer.js` | Fixed-size circular buffer for O(1) metrics history |
+| `lib/crypto.js` | AES-256-GCM encryption and decryption |
 | `lib/metrics.js` | Bandwidth tracking, path analytics, error recording |
+| `lib/pathDictionary.js` | Signal K path encoding (170+ paths) |
 | `lib/pipeline.js` | Compress → encrypt → send / receive → decrypt → decompress |
 | `lib/routes.js` | HTTP route handlers, rate limiting, config file I/O |
-| `crypto.js` | AES-256-GCM encryption and decryption |
-| `pathDictionary.js` | Signal K path encoding (170+ paths) |
 
 Modules are wired together via factory functions that receive a shared `state` object by reference, enabling cross-module state access without globals.
 
@@ -389,12 +389,12 @@ Modules are wired together via factory functions that receive a shared `state` o
 ```
 signalk-data-connector/
 ├── index.js                    # Plugin entry, state, watchers, lifecycle
-├── crypto.js                   # AES-256-GCM encryption module
-├── pathDictionary.js           # Signal K path encoding (170+ paths)
 ├── lib/
 │   ├── CircularBuffer.js       # Fixed-size circular buffer
 │   ├── constants.js            # Shared constants and utilities
+│   ├── crypto.js               # AES-256-GCM encryption module
 │   ├── metrics.js              # Metrics, bandwidth, path analytics
+│   ├── pathDictionary.js       # Signal K path encoding (170+ paths)
 │   ├── pipeline.js             # Pack/unpack pipeline (compress, encrypt, UDP)
 │   └── routes.js               # HTTP routes and rate limiting
 ├── src/
