@@ -98,7 +98,6 @@ function getSchema(isClientMode) {
     title: "SignalK Data Connector",
     description: "Configure encrypted UDP data transmission between SignalK units",
     required,
-    additionalProperties: false,
     properties
   };
 }
