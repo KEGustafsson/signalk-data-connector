@@ -120,8 +120,11 @@ describe("SignalK Data Connector Plugin", () => {
       expect(serverDep.properties.testAddress).toBeUndefined();
     });
 
-    test("should disallow additional properties", () => {
-      expect(plugin.schema.additionalProperties).toBe(false);
+    test("should NOT set additionalProperties:false (incompatible with dependencies/oneOf)", () => {
+      // additionalProperties:false would reject client fields defined in dependencies.oneOf
+      // since they are not in the top-level properties block. Server-side sanitization
+      // in the /plugin-config POST handler protects against unknown fields instead.
+      expect(plugin.schema.additionalProperties).not.toBe(false);
     });
   });
 
