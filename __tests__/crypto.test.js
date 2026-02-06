@@ -4,7 +4,7 @@ const {
   validateSecretKey,
   IV_LENGTH,
   AUTH_TAG_LENGTH
-} = require("../crypto");
+} = require("../lib/crypto");
 
 describe("Crypto Module", () => {
   const validSecretKey = "12345678901234567890123456789012"; // 32 characters

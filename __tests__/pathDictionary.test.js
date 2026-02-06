@@ -11,7 +11,7 @@ const {
   getAllPaths,
   getPathsByCategory,
   getDictionarySize
-} = require("../pathDictionary");
+} = require("../lib/pathDictionary");
 
 describe("Path Dictionary", () => {
   describe("PATH_TO_ID mapping", () => {
