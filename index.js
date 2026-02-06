@@ -545,6 +545,7 @@ module.exports = function createPlugin(app) {
     title: "SignalK Data Connector",
     description: "Configure encrypted UDP data transmission between SignalK units",
     required: ["serverType", "udpPort", "secretKey"],
+    additionalProperties: false,
     properties: {
       serverType: {
         type: "string",
