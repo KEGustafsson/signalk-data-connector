@@ -633,7 +633,7 @@ describe("SignalK Data Connector Plugin", () => {
       expect(savedConfig.serverType).toBe("client");
     });
 
-    test("should call restartPlugin after successful save", async () => {
+    test("should call restartPlugin with sanitized config after save", async () => {
       // Start the plugin to set state.restartPlugin
       const mockRestartPlugin = jest.fn();
       await plugin.start({
@@ -657,11 +657,39 @@ describe("SignalK Data Connector Plugin", () => {
 
       await runWithMiddlewares(pluginConfigPostMiddlewares, pluginConfigPostHandler, mockReq, mockRes);
 
-      expect(mockApp.savePluginOptions).toHaveBeenCalled();
       expect(mockRes.json).toHaveBeenCalledWith(
         expect.objectContaining({ success: true, restarting: true })
       );
-      expect(mockRestartPlugin).toHaveBeenCalled();
+      // restartPlugin must receive the config (not called empty — that would delete config from disk)
+      expect(mockRestartPlugin).toHaveBeenCalledWith(
+        expect.objectContaining({ serverType: "server", udpPort: 4446 })
+      );
+    });
+
+    test("should fall back to savePluginOptions when restartPlugin not available", async () => {
+      // Don't start the plugin — state.restartPlugin is not set
+      const mockReq = {
+        headers: { "content-type": "application/json" },
+        body: {
+          serverType: "client",
+          udpPort: 4446,
+          secretKey: "12345678901234567890123456789012",
+          udpAddress: "192.168.1.100",
+          testAddress: "8.8.8.8",
+          testPort: 53
+        }
+      };
+      const mockRes = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn()
+      };
+
+      await runWithMiddlewares(pluginConfigPostMiddlewares, pluginConfigPostHandler, mockReq, mockRes);
+
+      expect(mockApp.savePluginOptions).toHaveBeenCalled();
+      expect(mockRes.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, restarting: false })
+      );
     });
 
     test("should strip client-only fields when saving in server mode", async () => {
