@@ -1,70 +1,71 @@
-# SignalK Data Connector
+# Signal K Data Connector
 
-A SignalK plugin for secure, encrypted UDP data transmission with advanced bandwidth optimization.
+Secure, encrypted UDP data transmission between Signal K servers with advanced bandwidth optimization.
 
-[![Tests](https://img.shields.io/badge/tests-181%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
+[![Tests](https://img.shields.io/badge/tests-209%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen)](https://nodejs.org/)
 
 ![Data Connector Concept](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/dataconnectorconcept.jpg)
 
-## Features
+---
 
-- **AES-256-GCM Encryption**: Authenticated encryption with built-in integrity verification
-- **Optimized Binary Protocol**: Pure binary format with zero JSON overhead
-- **Single-Stage Compression**: Brotli quality-10 compression for maximum efficiency
-- **Path Dictionary Encoding**: 170+ SignalK paths mapped to numeric IDs (10-20% bandwidth savings)
-- **MessagePack Support**: Optional binary serialization (15-25% additional savings)
-- **Real-time Monitoring**: Comprehensive bandwidth dashboard, path analytics, performance metrics
-- **Configurable Filters**: Exclude NMEA sentences (GSV, GSA, etc.) to reduce bandwidth
-- **Client/Server Modes**: Sender or receiver operation with hot-reload configuration
-- **Rate Limiting**: API endpoint protection (20 req/min/IP)
-- **Connectivity Monitoring**: TCP ping with automatic reconnection and RTT measurement
-- **Network Metrics**: Real-time Round Trip Time (RTT) published to `networking.modem.rtt` path
-- **Smart Batching**: Adaptive packet sizing that learns optimal batch size to prevent UDP fragmentation
-- **Adaptive Configuration UI**: Dynamic settings that show only relevant options for each mode
+## Table of Contents
 
-## Performance Improvements
+- [Overview](#overview)
+- [Getting Started](#getting-started)
+  - [Installation](#installation)
+  - [Quick Start](#quick-start)
+- [Configuration](#configuration)
+  - [Server Mode](#server-mode-receiver)
+  - [Client Mode](#client-mode-sender)
+  - [Web Dashboard](#web-dashboard)
+  - [Configuration Files](#configuration-files)
+- [Network Monitoring](#network-monitoring)
+- [Performance](#performance)
+  - [Bandwidth Comparison](#bandwidth-comparison)
+  - [Smart Batching](#smart-batching)
+  - [Optimization Tips](#optimization-tips)
+- [Security](#security)
+  - [Encryption](#encryption)
+  - [Secret Key Requirements](#secret-key-requirements)
+  - [Best Practices](#best-practices)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+  - [Architecture](#architecture)
+  - [Project Structure](#project-structure)
+  - [Build Commands](#build-commands)
+  - [Testing](#testing)
+  - [Technical Reference](#technical-reference)
+  - [Contributing](#contributing)
+- [License](#license)
 
-**Major optimizations implemented in latest version:**
+---
 
-- ✅ **50-60% bandwidth reduction** compared to previous version
-- ✅ **60-70% latency reduction** (packet processing: 60-100ms → 20-30ms)
-- ✅ **96.78% compression ratio** on typical SignalK data
-- ✅ **Binary protocol**: ~40% overhead reduction (eliminated JSON/hex encoding)
-- ✅ **Single compression**: Removed wasteful double-compression stage
-- ✅ **Optimized encoding**: 90% faster path dictionary (10-50x speedup)
-- ✅ **Efficient memory**: Circular buffers for O(1) operations
+## Overview
 
-**Test Results:**
+Signal K Data Connector is a Signal K Node Server plugin that enables real-time data sharing between vessels or shore stations over UDP. It combines AES-256-GCM authenticated encryption with Brotli compression to deliver secure, bandwidth-efficient transmission — achieving up to **97% bandwidth reduction** compared to raw data.
 
-```
-Original: 19,293 bytes → Encrypted+Compressed: 622 bytes
-Bandwidth Reduction: 96.78%
-```
+**Key capabilities:**
 
-## Architecture
+| Feature | Description |
+|---------|-------------|
+| Encrypted transport | AES-256-GCM authenticated encryption with per-message unique IV |
+| Brotli compression | Quality-10 compression with 85–97% reduction on typical data |
+| Binary protocol | Zero JSON overhead in the wire format |
+| Path dictionary | 170+ Signal K paths mapped to numeric IDs (10–20% savings) |
+| MessagePack | Optional binary serialization (15–25% additional savings) |
+| Smart batching | Adaptive packet sizing that prevents UDP fragmentation |
+| Sentence filtering | Exclude NMEA sentences (GSV, GSA, etc.) to reduce bandwidth |
+| Network monitoring | TCP ping with RTT measurement published to Signal K |
+| Web dashboard | Real-time bandwidth, compression, and path analytics |
+| Hot-reload config | Configuration files reload automatically on change |
 
-### Client (Sender)
+---
 
-```
-SignalK Deltas → Filter → [Path Encode] → [MessagePack] → Brotli → AES-256-GCM → UDP
-```
+## Getting Started
 
-### Server (Receiver)
-
-```
-UDP → AES-256-GCM → Brotli → [MessagePack] → [Path Decode] → SignalK
-```
-
-**Key Design Principles:**
-
-- Binary format throughout (no JSON serialization overhead)
-- Single compression stage (encrypted data is incompressible)
-- Authenticated encryption (GCM provides encryption + integrity in one operation)
-- Optional path dictionary and MessagePack for additional savings
-
-## Installation
+### Installation
 
 ```bash
 cd ~/.signalk/node_modules/
@@ -74,33 +75,40 @@ npm install
 npm run build
 ```
 
-Restart SignalK server and configure via: Admin UI → Plugin Config → Signal K Data Connector
+Restart your Signal K server after installation.
+
+### Quick Start
+
+1. Open **Admin UI → Plugin Config → Signal K Data Connector**
+2. Choose an operation mode:
+   - **Server** — receives data from remote clients
+   - **Client** — sends data to a remote server
+3. Set the **UDP port** (must match between client and server)
+4. Enter a **32-character encryption key** (must be identical on both ends)
+5. For client mode, enter the **server IP address**
+6. Enable the plugin and verify data flow in the web dashboard
+
+> **Tip:** Start with the default settings. Enable path dictionary and MessagePack later for additional bandwidth savings.
+
+---
 
 ## Configuration
 
-The plugin uses a **custom React-based adaptive configuration UI** that replaces SignalK's default plugin configuration page. This UI dynamically shows only relevant settings for each operation mode, reducing clutter and preventing misconfiguration.
+The plugin provides a custom React-based configuration UI that dynamically adapts to the selected operation mode, showing only relevant settings.
 
-### Accessing Configuration
-
-Navigate to: **Admin UI → Plugin Config → Signal K Data Connector**
-
-The plugin uses Webpack Module Federation to expose a custom React component (`PluginConfigurationPanel`) that SignalK loads automatically. This provides a dynamic form that adapts when you switch between Server and Client modes - no page refresh required.
+**Access:** Admin UI → Plugin Config → Signal K Data Connector
 
 ### Server Mode (Receiver)
-
-The configuration UI shows only server-relevant settings:
 
 | Setting | Description |
 |---------|-------------|
 | Operation Mode | Server/Client selector |
-| UDP Port | Port to listen on (1024-65535) |
+| UDP Port | Port to listen on (1024–65535) |
 | Encryption Key | 32-character secret key |
 | MessagePack | Enable binary serialization |
 | Path Dictionary | Enable path encoding |
 
 ### Client Mode (Sender)
-
-The configuration UI shows all client settings:
 
 | Setting | Description |
 |---------|-------------|
@@ -109,450 +117,420 @@ The configuration UI shows all client settings:
 | Encryption Key | 32-character secret key (must match server) |
 | Destination Address | Server IP or hostname |
 | Heartbeat Interval | Keep-alive message frequency (seconds) |
-| Connectivity Test Target | Address to ping for network testing |
+| Connectivity Test Target | Address to ping for network monitoring |
 | Connectivity Test Port | Port to test (80, 443, etc.) |
 | Check Interval | How often to test connectivity (minutes) |
 | MessagePack | Enable binary serialization |
 | Path Dictionary | Enable path encoding |
 
-Use the web UI to additionally configure:
-- Delta timer (100-10000ms)
-- Subscription paths (add `networking.modem.rtt` to receive RTT measurements)
-- Sentence filters
+Additional client settings are available in the web dashboard:
+- **Delta timer** — collection interval (100–10000 ms)
+- **Subscription paths** — Signal K paths to transmit
+- **Sentence filter** — NMEA sentences to exclude (e.g., `GSV, GSA, VTG`)
 
-### Web UI
+### Web Dashboard
 
-Access via: `http://[signalk-server]:3000/plugins/signalk-data-connector`
+**Access:** `http://[signalk-server]:3000/plugins/signalk-data-connector`
 
-**Client Mode Features:**
+The dashboard provides real-time monitoring and configuration controls.
 
-- Delta Timer configuration (100-10000ms)
-- Subscription path management (JSON editor + form)
-- Sentence filter (comma-separated: `GSV, GSA, VTG`)
-- Real-time bandwidth monitor with compression ratio
-- **Bandwidth saved display** (shows actual bytes saved by compression)
-- Path analytics with data volume breakdown
+**Client mode:**
+- Delta timer and subscription management
+- Sentence filter configuration
+- Upload/download bandwidth with compression ratio
+- Bandwidth savings display (actual bytes saved)
+- Path analytics with per-path data volume breakdown
 - Performance metrics (errors, uptime, deltas sent)
 - Rate history chart (last 150 seconds)
 
-**Server Mode Features:**
-
-- Bandwidth monitor (download rate, packets received)
-- **Bandwidth saved display** (shows bytes saved on receiving compressed data)
-- Path analytics (incoming data breakdown)
+**Server mode:**
+- Download bandwidth and packet rate
+- Bandwidth savings display
+- Incoming path analytics
 - Performance metrics (deltas received, errors)
-- Real-time compression effectiveness tracking
+- Compression effectiveness tracking
 
 ### Configuration Files
 
-| File                   | Purpose                    |
-| ---------------------- | -------------------------- |
-| `delta_timer.json`     | Collection interval (ms)   |
-| `subscription.json`    | SignalK paths to subscribe |
-| `sentence_filter.json` | NMEA sentences to exclude  |
+These JSON files are stored in the plugin data directory and support hot-reload — changes take effect automatically without restarting.
 
-### Network Monitoring (Client Mode)
+| File | Purpose | Default |
+|------|---------|---------|
+| `delta_timer.json` | Collection interval in ms | `{"deltaTimer": 1000}` |
+| `subscription.json` | Signal K paths to subscribe | `{"context": "*", "subscribe": [...]}` |
+| `sentence_filter.json` | NMEA sentences to exclude | `{"sentences": []}` |
 
-The client measures **Round Trip Time (RTT)** to monitor network connectivity and latency:
+### API Endpoints
 
-**How It Works:**
-- Uses TCP ping to configured `testAddress:testPort`
-- Measures every `pingIntervalTime` minutes (configurable)
-- Publishes RTT to local SignalK at path `networking.modem.rtt`
-- Value in seconds (e.g., 0.025 = 25ms RTT)
+All endpoints are rate-limited to 20 requests per minute per IP.
 
-**RTT Data Flow:**
-1. Ping monitor measures TCP connection time to test server
-2. RTT published to local SignalK via `app.handleMessage()`
-3. Normal subscription picks up `networking.modem.rtt` (if subscribed)
-4. Sent to remote server with other subscribed data
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/plugins/signalk-data-connector/config/:filename` | Read a configuration file |
+| POST | `/plugins/signalk-data-connector/config/:filename` | Update a configuration file |
+| GET | `/plugins/signalk-data-connector/metrics` | Real-time statistics and performance data |
+| GET | `/plugins/signalk-data-connector/paths` | Path dictionary information |
+| GET | `/plugins/signalk-data-connector/plugin-config` | Current plugin configuration |
+| POST | `/plugins/signalk-data-connector/plugin-config` | Update plugin configuration |
+| GET | `/plugins/signalk-data-connector/plugin-schema` | Plugin schema definition |
 
-**To Enable RTT Transmission:**
-Add `networking.modem.rtt` to your `subscription.json` file. The RTT will then be sent to the remote server along with all other subscribed SignalK data.
+---
 
-**Use Cases:**
-- Monitor cellular/satellite modem latency
+## Network Monitoring
+
+In client mode, the plugin measures **Round Trip Time (RTT)** using TCP ping to monitor connectivity and latency.
+
+**How it works:**
+1. TCP ping is sent to the configured test address and port at the configured interval
+2. RTT is published to local Signal K at `networking.modem.rtt` (value in seconds)
+3. If subscribed, RTT data is transmitted to the remote server with other data
+
+**To enable RTT transmission:** Add `networking.modem.rtt` to your subscription paths.
+
+**Use cases:**
+- Monitor cellular or satellite modem latency
 - Track connection quality over time
 - Trigger alerts on high latency
 - Analyze network performance trends
 
-### API Endpoints
-
-- `GET/POST /plugins/signalk-data-connector/config/:filename` - Configuration management
-- `GET /plugins/signalk-data-connector/metrics` - Real-time statistics
-- `GET /plugins/signalk-data-connector/paths` - Path dictionary info
-
-All endpoints protected with rate limiting (20 requests/minute per IP).
+---
 
 ## Performance
 
-### Data Rate Comparison
-
-The following chart demonstrates the significant bandwidth savings achieved by this plugin compared to standard WebSocket connections:
+### Bandwidth Comparison
 
 ![Data Rate Comparison](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/datarate.jpg)
 
-**Key Performance Benefits:**
+| Mode | Bandwidth | Reduction vs. WebSocket |
+|------|-----------|------------------------|
+| 1000 ms collection | ~44.1 kb/s | ~70% |
+| 100 ms collection | ~107.7 kb/s | ~28% |
+| WebSocket real-time | ~149.5 kb/s | — |
 
-- **1000ms Collection Time**: ~44.1 kb/s (optimal compression)
-- **100ms Collection Time**: ~107.7 kb/s (faster updates)
-- **WebSocket Realtime**: ~149.5 kb/s (highest bandwidth usage)
+Typical compression results on Signal K data:
 
-The encrypted & compressed UDP approach provides **70% bandwidth reduction** compared to WebSocket connections while maintaining data integrity through AES-256-GCM authenticated encryption.
+```
+Original: 19,293 bytes → Encrypted + Compressed: 622 bytes (96.78% reduction)
+```
 
 ### Smart Batching
 
-The plugin uses **adaptive smart batching** to ensure UDP packets never exceed the MTU limit (1400 bytes), preventing packet fragmentation that can cause data loss on some networks.
+The plugin uses adaptive smart batching to keep UDP packets under the MTU limit (1400 bytes), preventing fragmentation that can cause data loss.
 
-**How It Works:**
-
-1. **Rolling Average Tracking**: Monitors average bytes-per-delta using exponential smoothing
-2. **Dynamic Batch Sizing**: Calculates optimal `maxDeltasPerBatch` based on recent packet sizes
-3. **Early Send Trigger**: Sends immediately when batch reaches predicted size limit
-4. **Self-Learning**: Continuously adapts as data patterns change
-
-**Configuration Constants:**
-
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| Safety Margin | 85% | Target 85% of MTU (1190 bytes) for variance buffer |
-| Smoothing Factor | 0.2 | Rolling average weight (20% new, 80% old) |
-| Initial Estimate | 200 bytes | Starting bytes-per-delta assumption |
-| Min Deltas | 1 | Always send at least 1 delta |
-| Max Deltas | 50 | Cap to prevent excessive batching latency |
-
-**Example Adaptation:**
+1. **Rolling average** — tracks bytes-per-delta using exponential smoothing
+2. **Dynamic batch sizing** — calculates optimal deltas per packet based on recent sizes
+3. **Early send trigger** — sends immediately when a batch reaches the predicted size limit
+4. **Self-learning** — continuously adapts as data patterns change
 
 ```
-Initial: 5 deltas/batch (based on 200 bytes estimate)
-After learning: 11 deltas/batch (compression reduces actual bytes/delta)
-Result: All packets stay well under 1400 bytes
+Example: Initial estimate 5 deltas/batch → After learning: 11 deltas/batch
+         All packets stay well under 1400 bytes
 ```
 
-**Metrics Available:**
+### Optimization Tips
 
-- `smartBatching.earlySends` - Packets sent by reaching batch limit
-- `smartBatching.timerSends` - Packets sent by timer expiration
-- `smartBatching.oversizedPackets` - Packets that exceeded MTU (should be 0)
-- `smartBatching.avgBytesPerDelta` - Current rolling average
-- `smartBatching.maxDeltasPerBatch` - Current calculated limit
+For the best bandwidth efficiency:
 
-### Bandwidth Optimization Techniques
+1. **Increase delta timer** — 1000 ms gives optimal compression; lower values increase bandwidth
+2. **Enable path dictionary** — saves 10–20% by replacing path strings with numeric IDs
+3. **Enable MessagePack** — saves 15–25% with binary serialization
+4. **Filter NMEA sentences** — exclude GSV, GSA, VTG to remove unnecessary data
+5. **Review subscriptions** — subscribe only to paths you need
 
-1. **Binary Protocol**: Eliminates JSON serialization overhead (~40% savings)
-2. **Path Dictionary**: Numeric IDs instead of full path strings (10-20% savings)
-3. **MessagePack**: Binary serialization format (15-25% additional savings when enabled)
-4. **Brotli Quality 10**: Maximum compression with size hints for optimal efficiency
-5. **Smart Filtering**: GSV sentence filtering prevents unnecessary data transmission
-6. **Smart Batching**: Adaptive packet sizing learns optimal batch size to stay under MTU
-
-### Performance Characteristics
-
-- **Compression Ratio**: Typically 85-97% on SignalK delta streams
-- **Latency**: 20-30ms per packet (serialize → compress → encrypt)
-- **Throughput**: Handles 10-100 Hz update rates efficiently
-- **Memory**: Constant O(1) with circular buffers
-- **CPU**: Minimal overhead with async/await pipeline
+---
 
 ## Security
 
 ### Encryption
 
-- **AES-256-GCM**: Industry-standard authenticated encryption
-  - **Encryption + Authentication**: Single operation (faster than separate HMAC)
-  - **Unique IV**: 12 bytes random per message (required for GCM security)
-  - **Auth Tag**: 16 bytes for tamper detection (built-in to GCM)
-  - **Binary Format**: `[IV (12)][Encrypted Data][Auth Tag (16)]`
+All data is encrypted with **AES-256-GCM**, providing authenticated encryption in a single operation.
 
-### Security Features
+| Property | Detail |
+|----------|--------|
+| Algorithm | AES-256-GCM |
+| IV | 12 bytes, unique per message |
+| Auth tag | 16 bytes, tamper detection |
+| Wire format | `[IV (12 bytes)][Encrypted Data][Auth Tag (16 bytes)]` |
+| Overhead | 28 bytes per packet |
 
-- **Tamper Detection**: Any modification to encrypted packets causes decryption to fail
-- **Rate Limiting**: API endpoints protected (20 requests/minute/IP)
-- **Input Validation**: Comprehensive validation on all parameters
-- **Key Entropy Checking**: Rejects weak keys (all same char, insufficient diversity)
-- **XSS Protection**: HTML escaping in web UI
-- **No Credential Storage**: Keys stored in SignalK configuration only
-- **Stateless UDP**: No session state to compromise
+**Security features:**
+- Tamper detection — any modification causes decryption failure
+- Rate-limited API endpoints (20 req/min/IP)
+- Input validation on all parameters
+- Key entropy checking — rejects weak keys
+- XSS protection in the web UI
+- Stateless UDP — no session state to compromise
 
 ### Secret Key Requirements
 
-- **Exactly 32 characters** (256 bits)
-- **Minimum 8 unique characters** (enforced entropy requirement)
-- **Must match on both client and server**
-- Alphanumeric and special characters recommended
+- Exactly **32 characters** (256 bits)
+- Minimum **8 unique characters**
+- Must match on both client and server
 
-**Generate secure key:**
+Generate a secure key:
 
 ```bash
 openssl rand -base64 32 | cut -c1-32
 ```
 
-**Examples of valid keys:**
-
+**Valid examples:**
 ```
-# Strong (recommended):
 Abc123!@#XYZ456$%^uvw789&*()pqr0
 K9#mP2$nQ7@rS4%tU6^vW8*xY3!zA5&
-
-# Acceptable (meets minimum requirements):
 abcdefgh12345678901234567890abcd
 ```
 
-**Invalid keys:**
-
+**Invalid examples:**
 ```
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  # All same character (rejected)
-abababababababababababababababab  # Insufficient diversity (rejected)
-MySecretKey123                     # Too short (rejected)
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa   # All same character
+abababababababababababababababab   # Insufficient diversity
+MySecretKey123                     # Too short
 ```
 
 ### Best Practices
 
-1. **Use strong, randomly generated keys** (openssl rand recommended)
-2. **Never commit keys to version control** (use environment variables or secure config)
-3. **Rotate keys periodically** (e.g., every 6-12 months)
-4. **Monitor logs for decryption failures** (may indicate attacks or mismatched keys)
-5. **Use firewall rules to restrict UDP access** (only allow known IP addresses)
-6. **Enable debug logging temporarily** when troubleshooting connectivity
-7. **Test configuration in safe environment** before deploying to production
+1. Use strong, randomly generated keys (`openssl rand` recommended)
+2. Never commit keys to version control
+3. Rotate keys periodically (every 6–12 months)
+4. Monitor logs for decryption failures (may indicate attacks or key mismatch)
+5. Restrict UDP access with firewall rules to known IP addresses
+6. Test configuration in a safe environment before production deployment
+
+---
 
 ## Troubleshooting
 
 ### Plugin Not Loading
 
 - Verify `npm install` completed successfully
-- Check SignalK server logs for errors
+- Check Signal K server logs for errors
 - Ensure plugin directory is `~/.signalk/node_modules/signalk-data-connector`
-- Verify Node.js version ≥14.0.0
+- Verify Node.js version ≥ 14.0.0
 
 ### Web UI Not Accessible
 
 - Run `npm run build` to generate UI files
-- Check `public/` directory exists with built files
-- Verify SignalK is serving plugin static files
+- Verify `public/` directory exists with built files
 - Clear browser cache and refresh
 
 ### No Data Transmission
 
-**Client Mode:**
+**Client side:**
+1. Confirm encryption keys match on both ends
+2. Verify UDP port and destination address
+3. Check firewall allows UDP traffic on the configured port
+4. Confirm subscription paths are valid Signal K paths
+5. Verify delta timer is running (check metrics in web dashboard)
 
-1. Confirm matching encryption keys on client and server
-2. Verify UDP port and address configuration
-3. Check firewall allows UDP traffic on configured port
-4. Confirm subscription paths are valid SignalK paths
-5. Verify delta timer is running (check metrics)
-6. Enable debug logging to see packet transmission
+**Server side:**
+1. Verify UDP port is not blocked by firewall
+2. Confirm encryption key matches the client
+3. Check Signal K logs for decryption errors
+4. Verify client is sending data (check client metrics)
 
-**Server Mode:**
+**Common error messages:**
 
-1. Verify UDP port is accessible (not blocked by firewall)
-2. Confirm encryption key matches client
-3. Check SignalK logs for decryption errors
-4. Verify client is actually sending data (check client metrics)
-
-**Common Error Messages:**
-
-- `"Unsupported state or unable to authenticate data"` → Mismatched encryption keys
-- `"Invalid packet size"` → Corrupted data or network issues
-- `"Secret key must be exactly 32 characters"` → Invalid key length
+| Message | Cause |
+|---------|-------|
+| `Unsupported state or unable to authenticate data` | Mismatched encryption keys |
+| `Invalid packet size` | Corrupted data or network issues |
+| `Secret key must be exactly 32 characters` | Invalid key length |
 
 ### Poor Performance
 
-- **Increase delta timer** for better compression (1000ms recommended for optimal bandwidth)
-- **Enable path dictionary** for additional 10-20% savings
-- **Enable MessagePack** for 15-25% additional compression
-- **Filter unnecessary NMEA sentences** (GSV, GSA can add significant overhead)
-- **Check network latency** and packet loss with ping monitor
-- **Verify sufficient data is being collected** (empty deltas compress poorly)
-- **Monitor CPU usage** (compression is CPU-intensive at quality 10)
-
-### High Bandwidth Usage
-
-1. Reduce update frequency (increase delta timer)
-2. Enable path dictionary encoding
-3. Enable MessagePack serialization
-4. Add NMEA sentence filters (GSV, GSA, VTG)
-5. Reduce number of subscription paths
-6. Check for unnecessary high-frequency updates
+- Increase delta timer for better compression (1000 ms recommended)
+- Enable path dictionary and MessagePack
+- Filter unnecessary NMEA sentences
+- Check network latency with the ping monitor
+- Monitor CPU usage (Brotli compression at quality 10 is CPU-intensive)
 
 ### Debug Logging
 
-Enable in SignalK plugin settings to see:
-
+Enable in Signal K plugin settings to see:
 - Connection monitor status and ping results
 - Configuration file changes (automatic reload)
-- Delta transmission statistics (every packet)
+- Delta transmission statistics
 - Compression ratios and packet sizes
-- Error messages with full stack traces
-- Metrics updates (bandwidth, rates, path stats)
+- Error messages with full context
 
-**Log Level Recommendations:**
-
-- **Production**: Error only
-- **Troubleshooting**: Info (shows key events)
-- **Development**: Debug (shows all details)
+---
 
 ## Development
 
-### Build Commands
+### Architecture
 
-```bash
-npm run dev          # Development build with watch mode
-npm run build        # Production build with versioning
-npm test             # Run test suite (181 tests)
-npm run test:watch   # Run tests in watch mode
-npm run test:coverage # Generate coverage report
-npm run lint         # Check code style
-npm run lint:fix     # Auto-fix linting issues
-npm run format       # Format code with Prettier
+**Data pipeline:**
+
+```
+Client (Sender):
+  Signal K Deltas → Filter → [Path Encode] → [MessagePack] → Brotli → AES-256-GCM → UDP
+
+Server (Receiver):
+  UDP → AES-256-GCM → Brotli → [MessagePack] → [Path Decode] → Signal K
 ```
 
-### Testing
+The plugin core is decomposed into focused modules:
 
-**Test Suite Coverage:**
+| Module | Responsibility |
+|--------|---------------|
+| `index.js` | Plugin entry point, shared state, file watchers, lifecycle |
+| `lib/constants.js` | Shared constants and batch size calculation |
+| `lib/CircularBuffer.js` | Fixed-size circular buffer for O(1) metrics history |
+| `lib/metrics.js` | Bandwidth tracking, path analytics, error recording |
+| `lib/pipeline.js` | Compress → encrypt → send / receive → decrypt → decompress |
+| `lib/routes.js` | HTTP route handlers, rate limiting, config file I/O |
+| `crypto.js` | AES-256-GCM encryption and decryption |
+| `pathDictionary.js` | Signal K path encoding (170+ paths) |
 
-- ✅ 181 tests, all passing
-- ✅ Crypto module: 100% coverage (encryption, decryption, validation)
-- ✅ Path dictionary: 100% coverage (encoding, decoding)
-- ✅ Full pipeline: End-to-end tests with real compression/encryption
-- ✅ Smart batching: Rolling average, batch limits, size verification
-- ✅ Configuration: Hot-reload testing, adaptive schema validation
-- ✅ Web UI: Metrics and API endpoints
-- ✅ Network monitoring: RTT measurement and publishing
-
-**Run specific test suites:**
-
-```bash
-npm test -- crypto.test.js           # Encryption tests only
-npm test -- full-pipeline.test.js    # Integration tests
-npm test -- --coverage               # With coverage report
-```
+Modules are wired together via factory functions that receive a shared `state` object by reference, enabling cross-module state access without globals.
 
 ### Project Structure
 
 ```
 signalk-data-connector/
-├── index.js              # Main plugin (1380 lines)
-├── crypto.js             # AES-256-GCM encryption (90 lines)
-├── pathDictionary.js     # SignalK path encoding (170+ paths)
-├── src/webapp/           # Web UI source (React-free vanilla JS)
-│   ├── index.js         # Main UI logic
-│   └── styles.css       # Styling
-├── __tests__/           # Test suite (181 tests)
+├── index.js                    # Plugin entry, state, watchers, lifecycle
+├── crypto.js                   # AES-256-GCM encryption module
+├── pathDictionary.js           # Signal K path encoding (170+ paths)
+├── lib/
+│   ├── CircularBuffer.js       # Fixed-size circular buffer
+│   ├── constants.js            # Shared constants and utilities
+│   ├── metrics.js              # Metrics, bandwidth, path analytics
+│   ├── pipeline.js             # Pack/unpack pipeline (compress, encrypt, UDP)
+│   └── routes.js               # HTTP routes and rate limiting
+├── src/
+│   ├── webapp/
+│   │   ├── index.js            # Web dashboard (vanilla JS)
+│   │   └── styles.css
+│   └── components/
+│       └── PluginConfigurationPanel.jsx  # React config panel
+├── __tests__/                  # 209 tests across 9 files
 │   ├── crypto.test.js
 │   ├── pathDictionary.test.js
 │   ├── compression.test.js
 │   ├── full-pipeline.test.js
 │   ├── smartBatching.test.js
 │   ├── config.test.js
-│   └── index.test.js
-└── public/              # Built UI files (generated)
+│   ├── index.test.js
+│   ├── webapp.test.js
+│   └── integration-pipe.test.js
+└── public/                     # Built UI files (generated)
 ```
 
-### Code Quality Standards
+### Build Commands
 
-- **ESLint**: Enforced code style (extends eslint:recommended)
-- **Prettier**: Consistent formatting
-- **JSDoc**: All public functions documented
-- **Test Coverage**: Critical paths at 100%
-- **No TODOs**: All code complete and production-ready
-- **Error Handling**: Comprehensive try/catch with metrics
-- **Memory Management**: Proper cleanup in stop()
+```bash
+npm run dev            # Development build with watch mode
+npm run build          # Production build
+npm test               # Run all 209 tests
+npm run test:watch     # Run tests in watch mode
+npm run test:coverage  # Generate coverage report
+npm run lint           # Check code style
+npm run lint:fix       # Auto-fix linting issues
+npm run format         # Format code with Prettier
+```
 
-## Technical Details
+### Testing
 
-### Packet Format
+The test suite covers all critical paths with 209 tests across 9 files:
 
-**Binary Packet Structure:**
+| Test file | Scope |
+|-----------|-------|
+| `crypto.test.js` | Encryption, decryption, key validation |
+| `pathDictionary.test.js` | Path encoding and decoding |
+| `compression.test.js` | Brotli compression effectiveness |
+| `full-pipeline.test.js` | End-to-end compression + encryption round-trip |
+| `smartBatching.test.js` | Rolling average, batch limits, size verification |
+| `config.test.js` | Configuration file creation, loading, hot-reload |
+| `index.test.js` | Plugin lifecycle, schema validation |
+| `webapp.test.js` | Web UI metrics and API endpoints |
+| `integration-pipe.test.js` | Full input → backend → frontend data flow |
+
+Run a specific test suite:
+
+```bash
+npm test -- crypto.test.js
+npm test -- full-pipeline.test.js
+npm test -- --coverage
+```
+
+### Technical Reference
+
+**Packet format:**
 
 ```
 [IV (12 bytes)][Encrypted Data][Auth Tag (16 bytes)]
+Total overhead: 28 bytes per packet
 ```
 
-**Total Overhead:** 28 bytes per packet (vs 120%+ overhead with JSON/hex encoding)
+**Compression pipeline (detailed):**
 
-### Compression Pipeline
+```
+Client side:
+  JSON.stringify(delta)           → Serialization
+  → [pathDictionary.encode()]     → Optional: numeric path IDs
+  → [msgpack.encode()]            → Optional: binary format
+  → brotli.compress(quality=10)   → Maximum compression
+  → encryptBinary(key)            → AES-256-GCM
+  → UDP send
 
-```javascript
-// Client side:
-JSON.stringify(delta)           // Serialization
-→ [pathDictionary.encode()]     // Optional: numeric IDs
-→ [msgpack.encode()]            // Optional: binary format
-→ brotli.compress(quality=10)   // Maximum compression
-→ encryptBinary(key)            // AES-256-GCM
-→ UDP send
-
-// Server side (reverse):
-UDP receive
-→ decryptBinary(key)            // Verify + decrypt
-→ brotli.decompress()
-→ [msgpack.decode()]
-→ [pathDictionary.decode()]
-→ JSON.parse()
-→ SignalK handleMessage()
+Server side:
+  UDP receive
+  → decryptBinary(key)            → Verify + decrypt
+  → brotli.decompress()
+  → [msgpack.decode()]
+  → [pathDictionary.decode()]
+  → JSON.parse()
+  → Signal K handleMessage()
 ```
 
-### Performance Optimizations
+**Smart batching constants:**
 
-1. **Circular Buffer** (O(1) operations)
-   - Fixed-size history buffer
-   - No array shifting overhead
-   - Constant memory usage
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| Safety margin | 85% | Target 85% of MTU (1190 bytes effective) |
+| Smoothing factor | 0.2 | Rolling average weight (20% new, 80% old) |
+| Initial estimate | 200 bytes | Starting bytes-per-delta assumption |
+| Min deltas | 1 | Always send at least 1 delta |
+| Max deltas | 50 | Cap to prevent excessive batching latency |
 
-2. **Partial Sort** (O(n) vs O(n log n))
-   - Top-N path selection
-   - Heap-based algorithm
-   - 10x faster for top 50 paths
+**Performance characteristics:**
 
-3. **Structured Cloning** (10-50x faster)
-   - Manual object cloning
-   - Avoids JSON.parse(JSON.stringify())
-   - Reduced GC pressure
+| Metric | Value |
+|--------|-------|
+| Compression ratio | 85–97% on typical Signal K data |
+| Packet latency | 20–30 ms (serialize → compress → encrypt) |
+| Throughput | 10–100 Hz update rates |
+| Memory | Constant O(1) with circular buffers |
 
-4. **Async/Await Pipeline**
-   - Non-blocking compression
-   - Concurrent operations
-   - Better CPU utilization
-
-5. **Smart Metrics Tracking**
-   - Precomputed sizes
-   - Circular buffers for history
-   - Rate limiting on calculations
-
-## Contributing
+### Contributing
 
 1. Fork the repository
-2. Create feature branch: `git checkout -b feature/name`
+2. Create a feature branch: `git checkout -b feature/name`
 3. Make changes and add tests
-4. Run `npm test` and `npm run lint` (must pass)
+4. Run `npm test` and `npm run lint` (all must pass)
 5. Run `npm run build` (must succeed)
-6. Commit with clear messages (use conventional commits)
-7. Submit pull request
+6. Commit with clear messages using conventional format
+7. Submit a pull request
 
-**Requirements:**
+**Requirements for all contributions:**
+- All 209 tests pass
+- No ESLint errors or warnings
+- Code formatted with Prettier
+- Test coverage for new features
+- README updated if adding features
 
-- ✅ All 181 tests must pass
-- ✅ No ESLint errors or warnings
-- ✅ Code formatted with Prettier
-- ✅ JSDoc comments for public functions
-- ✅ Test coverage for new features
-- ✅ Update README if adding features
-
-**Commit Message Format:**
+**Commit message format:**
 
 ```
 type: description
 
 Types: feat, fix, docs, style, refactor, perf, test, chore
-Examples:
-  feat: add MessagePack serialization support
-  fix: resolve race condition in file watcher
-  perf: optimize path dictionary encoding (10x speedup)
-  docs: update README with performance numbers
 ```
+
+---
 
 ## License
 
-MIT License - Copyright (c) 2024 Karl-Erik Gustafsson
+MIT License — Copyright (c) 2024 Karl-Erik Gustafsson
 
 See [LICENSE](LICENSE) file for details.

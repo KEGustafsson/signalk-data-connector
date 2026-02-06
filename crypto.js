@@ -52,10 +52,10 @@ const decryptBinary = (packet, secretKey) => {
     throw new Error("Invalid packet size");
   }
 
-  // Extract components from packet
-  const iv = packet.slice(0, IV_LENGTH);
-  const authTag = packet.slice(-AUTH_TAG_LENGTH);
-  const encrypted = packet.slice(IV_LENGTH, -AUTH_TAG_LENGTH);
+  // Extract components from packet (subarray provides zero-copy views)
+  const iv = packet.subarray(0, IV_LENGTH);
+  const authTag = packet.subarray(packet.length - AUTH_TAG_LENGTH);
+  const encrypted = packet.subarray(IV_LENGTH, packet.length - AUTH_TAG_LENGTH);
 
   const decipher = crypto.createDecipheriv(ALGORITHM, secretKey, iv);
   decipher.setAuthTag(authTag);

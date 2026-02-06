@@ -193,7 +193,7 @@ function PluginConfigurationPanel(props) {
       if (response.ok && data.success) {
         setSaveStatus({
           type: "success",
-          message: data.message || "Saved! Restart plugin to apply."
+          message: data.message || "Configuration saved. Plugin restarting..."
         });
       } else {
         throw new Error(data.error || "Failed to save");

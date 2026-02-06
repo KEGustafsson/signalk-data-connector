@@ -392,16 +392,18 @@ function decodePath(id) {
 }
 
 /**
- * Encodes paths in a delta object (optimized - no JSON stringify/parse)
+ * Transforms paths in a delta object using the provided path transform function
+ * Shared implementation for both encoding and decoding
  * @param {Object} delta - SignalK delta object
- * @returns {Object} Delta with encoded paths
+ * @param {Function} pathTransform - Function to transform each path value
+ * @param {Function} shouldTransform - Predicate to check if a value should be transformed
+ * @returns {Object} Delta with transformed paths
  */
-function encodeDelta(delta) {
+function transformDelta(delta, pathTransform, shouldTransform) {
   if (!delta || !delta.updates) {
     return delta;
   }
 
-  // Structured clone - only clone what we need to modify
   return {
     context: delta.context,
     updates: delta.updates.map((update) => ({
@@ -412,11 +414,20 @@ function encodeDelta(delta) {
       $source: update.$source,
       values: update.values
         ? update.values.map((value) =>
-          value.path ? { ...value, path: encodePath(value.path) } : { ...value }
+          shouldTransform(value) ? { ...value, path: pathTransform(value.path) } : { ...value }
         )
         : update.values
     }))
   };
+}
+
+/**
+ * Encodes paths in a delta object (optimized - no JSON stringify/parse)
+ * @param {Object} delta - SignalK delta object
+ * @returns {Object} Delta with encoded paths
+ */
+function encodeDelta(delta) {
+  return transformDelta(delta, encodePath, (value) => !!value.path);
 }
 
 /**
@@ -425,26 +436,7 @@ function encodeDelta(delta) {
  * @returns {Object} Delta with decoded paths
  */
 function decodeDelta(delta) {
-  if (!delta || !delta.updates) {
-    return delta;
-  }
-
-  // Structured clone - only clone what we need to modify
-  return {
-    context: delta.context,
-    updates: delta.updates.map((update) => ({
-      // Ensure source is always an object (never null/undefined) to prevent
-      // "Cannot set properties of null (setting 'label')" errors in SignalK
-      source: update.source ?? {},
-      timestamp: update.timestamp,
-      $source: update.$source,
-      values: update.values
-        ? update.values.map((value) =>
-          value.path !== undefined ? { ...value, path: decodePath(value.path) } : { ...value }
-        )
-        : update.values
-    }))
-  };
+  return transformDelta(delta, decodePath, (value) => value.path !== undefined);
 }
 
 /**

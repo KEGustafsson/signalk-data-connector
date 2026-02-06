@@ -62,16 +62,14 @@ class DataConnectorConfig {
       await this.checkServerMode();
       if (this.isServerMode) {
         this.showServerModeUI();
-        await this.loadMetrics(); // Load metrics for server mode
-        this.startMetricsRefresh(); // Start auto-refresh
       } else {
         await this.loadConfigurations();
         this.setupEventListeners();
         this.updateUI();
         this.updateStatus();
-        await this.loadMetrics(); // Load metrics for client mode
-        this.startMetricsRefresh(); // Start auto-refresh
       }
+      await this.loadMetrics();
+      this.startMetricsRefresh();
     } catch (error) {
       console.error("Initialization error:", error);
       this.showNotification("Failed to initialize application: " + error.message, "error");
@@ -254,6 +252,26 @@ class DataConnectorConfig {
     }
   }
 
+  async saveConfig(filename, config, configKey, label) {
+    try {
+      const response = await fetch(`${API_BASE_PATH}/config/${filename}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config)
+      });
+
+      if (response.ok) {
+        this[configKey] = config;
+        this.showNotification(`${label} saved successfully!`, "success");
+        this.updateStatus();
+      } else {
+        throw new Error("Failed to save configuration");
+      }
+    } catch (error) {
+      this.showNotification(`Error saving ${label.toLowerCase()}: ` + error.message, "error");
+    }
+  }
+
   async saveDeltaTimer() {
     const deltaTimer = parseInt(document.getElementById("deltaTimer").value);
 
@@ -265,25 +283,7 @@ class DataConnectorConfig {
       return;
     }
 
-    const config = { deltaTimer: deltaTimer };
-
-    try {
-      const response = await fetch(`${API_BASE_PATH}/config/delta_timer.json`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config)
-      });
-
-      if (response.ok) {
-        this.deltaTimerConfig = config;
-        this.showNotification("Delta timer configuration saved successfully!", "success");
-        this.updateStatus();
-      } else {
-        throw new Error("Failed to save configuration");
-      }
-    } catch (error) {
-      this.showNotification("Error saving delta timer: " + error.message, "error");
-    }
+    await this.saveConfig("delta_timer.json", { deltaTimer }, "deltaTimerConfig", "Delta timer configuration");
   }
 
   async saveSubscription() {
@@ -291,61 +291,27 @@ class DataConnectorConfig {
       const jsonText = document.getElementById("subscriptionJson").value;
       const config = JSON.parse(jsonText);
 
-      // Validate configuration
       if (!config.context) {
         throw new Error("Context is required");
       }
-
       if (!config.subscribe || !Array.isArray(config.subscribe)) {
         throw new Error("Subscribe array is required");
       }
 
-      const response = await fetch(`${API_BASE_PATH}/config/subscription.json`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config)
-      });
-
-      if (response.ok) {
-        this.subscriptionConfig = config;
-        this.showNotification("Subscription configuration saved successfully!", "success");
-        this.updateStatus();
-      } else {
-        throw new Error("Failed to save configuration");
-      }
+      await this.saveConfig("subscription.json", config, "subscriptionConfig", "Subscription configuration");
     } catch (error) {
       this.showNotification("Error saving subscription: " + error.message, "error");
     }
   }
 
   async saveSentenceFilter() {
-    try {
-      const filterInput = document.getElementById("sentenceFilter").value;
+    const filterInput = document.getElementById("sentenceFilter").value;
+    const excludedSentences = filterInput
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => s.length > 0);
 
-      // Parse comma-separated list, trim whitespace, filter empty values, uppercase
-      const excludedSentences = filterInput
-        .split(",")
-        .map((s) => s.trim().toUpperCase())
-        .filter((s) => s.length > 0);
-
-      const config = { excludedSentences: excludedSentences };
-
-      const response = await fetch(`${API_BASE_PATH}/config/sentence_filter.json`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config)
-      });
-
-      if (response.ok) {
-        this.sentenceFilterConfig = config;
-        this.showNotification("Sentence filter saved successfully!", "success");
-        this.updateStatus();
-      } else {
-        throw new Error("Failed to save configuration");
-      }
-    } catch (error) {
-      this.showNotification("Error saving sentence filter: " + error.message, "error");
-    }
+    await this.saveConfig("sentence_filter.json", { excludedSentences }, "sentenceFilterConfig", "Sentence filter");
   }
 
   async loadMetrics() {
