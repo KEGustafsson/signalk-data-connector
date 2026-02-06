@@ -1,5 +1,5 @@
 "use strict";
-const { access, readFile, writeFile } = require("fs").promises;
+const { readFile, writeFile } = require("fs").promises;
 const { watch } = require("fs");
 const { join } = require("path");
 const { promisify } = require("util");
@@ -239,29 +239,24 @@ module.exports = function createPlugin(app) {
    * Used during plugin stop for clean restart
    */
   function resetMetrics() {
-    metrics.startTime = Date.now();
-    metrics.deltasSent = 0;
-    metrics.deltasReceived = 0;
-    metrics.udpSendErrors = 0;
-    metrics.udpRetries = 0;
-    metrics.compressionErrors = 0;
-    metrics.encryptionErrors = 0;
-    metrics.subscriptionErrors = 0;
-    metrics.lastError = null;
-    metrics.lastErrorTime = null;
-    metrics.bandwidth.bytesOut = 0;
-    metrics.bandwidth.bytesIn = 0;
-    metrics.bandwidth.bytesOutRaw = 0;
-    metrics.bandwidth.bytesInRaw = 0;
-    metrics.bandwidth.packetsOut = 0;
-    metrics.bandwidth.packetsIn = 0;
-    metrics.bandwidth.lastBytesOut = 0;
-    metrics.bandwidth.lastBytesIn = 0;
-    metrics.bandwidth.lastRateCalcTime = Date.now();
-    metrics.bandwidth.rateOut = 0;
-    metrics.bandwidth.rateIn = 0;
-    metrics.bandwidth.compressionRatio = 0;
-    metrics.bandwidth.history = new CircularBuffer(BANDWIDTH_HISTORY_MAX);
+    Object.assign(metrics, {
+      startTime: Date.now(),
+      deltasSent: 0,
+      deltasReceived: 0,
+      udpSendErrors: 0,
+      udpRetries: 0,
+      compressionErrors: 0,
+      encryptionErrors: 0,
+      subscriptionErrors: 0,
+      lastError: null,
+      lastErrorTime: null
+    });
+    Object.assign(metrics.bandwidth, {
+      bytesOut: 0, bytesIn: 0, bytesOutRaw: 0, bytesInRaw: 0,
+      packetsOut: 0, packetsIn: 0, lastBytesOut: 0, lastBytesIn: 0,
+      lastRateCalcTime: Date.now(), rateOut: 0, rateIn: 0, compressionRatio: 0,
+      history: new CircularBuffer(BANDWIDTH_HISTORY_MAX)
+    });
     metrics.pathStats.clear();
   }
 
@@ -334,7 +329,6 @@ module.exports = function createPlugin(app) {
    */
   async function loadConfigFile(filePath) {
     try {
-      await access(filePath);
       const content = await readFile(filePath, "utf-8");
       return JSON.parse(content);
     } catch (err) {
@@ -369,33 +363,20 @@ module.exports = function createPlugin(app) {
     subscriptionFile = join(app.getDataDirPath(), "subscription.json");
     sentenceFilterFile = join(app.getDataDirPath(), "sentence_filter.json");
 
-    // Initialize delta timer file
-    const deltaTimerData = await loadConfigFile(deltaTimerFile);
-    if (!deltaTimerData) {
-      await saveConfigFile(deltaTimerFile, { deltaTimer: DEFAULT_DELTA_TIMER });
-      app.debug("Initialized delta_timer.json with default values");
-    }
+    const defaults = [
+      { file: deltaTimerFile, data: { deltaTimer: DEFAULT_DELTA_TIMER }, name: "delta_timer.json" },
+      { file: subscriptionFile, data: { context: "*", subscribe: [{ path: "*" }] }, name: "subscription.json" },
+      { file: sentenceFilterFile, data: { excludedSentences: ["GSV"] }, name: "sentence_filter.json" }
+    ];
 
-    // Initialize subscription file
-    const subscriptionData = await loadConfigFile(subscriptionFile);
-    if (!subscriptionData) {
-      await saveConfigFile(subscriptionFile, {
-        context: "*",
-        subscribe: [{ path: "*" }]
-      });
-      app.debug("Initialized subscription.json with default values");
-    }
-
-    // Initialize sentence filter file
-    const sentenceFilterData = await loadConfigFile(sentenceFilterFile);
-    if (!sentenceFilterData) {
-      await saveConfigFile(sentenceFilterFile, {
-        excludedSentences: ["GSV"]
-      });
-      app.debug("Initialized sentence_filter.json with default values");
-    } else {
-      // Load existing sentence filter
-      excludedSentences = sentenceFilterData.excludedSentences || ["GSV"];
+    for (const { file, data, name } of defaults) {
+      const existing = await loadConfigFile(file);
+      if (!existing) {
+        await saveConfigFile(file, data);
+        app.debug(`Initialized ${name} with default values`);
+      } else if (name === "sentence_filter.json") {
+        excludedSentences = existing.excludedSentences || ["GSV"];
+      }
     }
   }
 
@@ -513,17 +494,17 @@ module.exports = function createPlugin(app) {
               deltas.push(delta);
               setImmediate(() => app.reportOutputMessages());
 
-              // Smart batching: send early if batch reaches predicted size limit
-              if (deltas.length >= maxDeltasPerBatch) {
-                app.debug(
-                  `Smart batch: sending ${deltas.length} deltas (reached predicted limit of ${maxDeltasPerBatch})`
-                );
-                metrics.smartBatching.earlySends++;
-                packCrypt(deltas, pluginOptions.secretKey, pluginOptions.udpAddress, pluginOptions.udpPort);
-                deltas = [];
-                timer = false;
-              } else if (timer) {
-                metrics.smartBatching.timerSends++;
+              // Smart batching: send when batch is full or timer fires
+              const batchReady = deltas.length >= maxDeltasPerBatch;
+              if (batchReady || timer) {
+                if (batchReady) {
+                  app.debug(
+                    `Smart batch: sending ${deltas.length} deltas (reached predicted limit of ${maxDeltasPerBatch})`
+                  );
+                  metrics.smartBatching.earlySends++;
+                } else {
+                  metrics.smartBatching.timerSends++;
+                }
                 packCrypt(deltas, pluginOptions.secretKey, pluginOptions.udpAddress, pluginOptions.udpPort);
                 deltas = [];
                 timer = false;
@@ -661,15 +642,11 @@ module.exports = function createPlugin(app) {
       metrics.bandwidth.rateOut = Math.round(bytesDeltaOut / elapsed);
       metrics.bandwidth.rateIn = Math.round(bytesDeltaIn / elapsed);
 
-      // Update compression ratio (client: bytesOut/bytesOutRaw, server: bytesIn/bytesInRaw)
-      if (isServerMode && metrics.bandwidth.bytesInRaw > 0) {
-        metrics.bandwidth.compressionRatio = Math.round(
-          (1 - metrics.bandwidth.bytesIn / metrics.bandwidth.bytesInRaw) * 100
-        );
-      } else if (!isServerMode && metrics.bandwidth.bytesOutRaw > 0) {
-        metrics.bandwidth.compressionRatio = Math.round(
-          (1 - metrics.bandwidth.bytesOut / metrics.bandwidth.bytesOutRaw) * 100
-        );
+      // Update compression ratio (server: bytesIn/bytesInRaw, client: bytesOut/bytesOutRaw)
+      const compressed = isServerMode ? metrics.bandwidth.bytesIn : metrics.bandwidth.bytesOut;
+      const raw = isServerMode ? metrics.bandwidth.bytesInRaw : metrics.bandwidth.bytesOutRaw;
+      if (raw > 0) {
+        metrics.bandwidth.compressionRatio = Math.round((1 - compressed / raw) * 100);
       }
 
       // Add to circular buffer history (no need to trim, it's automatic)
@@ -1136,30 +1113,23 @@ module.exports = function createPlugin(app) {
         protocol: "tcp"
       });
 
-      pingMonitor.on("up", function (res, _state) {
+      pingMonitor.on("up", function (res) {
         handlePingSuccess(res, "up", options.pingIntervalTime);
       });
 
-      pingMonitor.on("down", function (_res, _state) {
-        readyToSend = false;
-        app.debug("Connection monitor: down");
-      });
-
-      pingMonitor.on("restored", function (res, _state) {
+      pingMonitor.on("restored", function (res) {
         handlePingSuccess(res, "restored", options.pingIntervalTime);
       });
 
-      pingMonitor.on("stop", function (_res, _state) {
-        readyToSend = false;
-        app.debug("Connection monitor: stopped");
-      });
+      // All failure events: mark not ready and log
+      for (const event of ["down", "stop", "timeout"]) {
+        pingMonitor.on(event, function () {
+          readyToSend = false;
+          app.debug(`Connection monitor: ${event === "stop" ? "stopped" : event}`);
+        });
+      }
 
-      pingMonitor.on("timeout", function (_error, _res) {
-        readyToSend = false;
-        app.debug("Connection monitor: timeout");
-      });
-
-      pingMonitor.on("error", function (error, _res) {
+      pingMonitor.on("error", function (error) {
         readyToSend = false;
         if (error) {
           const errorMessage =
