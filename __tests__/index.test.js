@@ -662,6 +662,256 @@ describe("SignalK Data Connector Plugin", () => {
     });
   });
 
+  describe("Plugin Config Read-Modify-Save Round-Trip", () => {
+    let mockRouter;
+    let pluginConfigGetHandler;
+    let pluginConfigGetMiddlewares;
+    let pluginConfigPostHandler;
+    let pluginConfigPostMiddlewares;
+
+    /**
+     * Simulates SignalK server's actual savePluginOptions behavior:
+     *   { ...getPluginOptions(plugin.id), configuration }
+     * where "configuration" is a shorthand property — the parameter value
+     * becomes the value of a key named "configuration".
+     */
+    let diskFile;
+
+    beforeEach(() => {
+      // Simulate the on-disk plugin config file
+      diskFile = {
+        enabled: true,
+        configuration: {
+          serverType: "client",
+          udpPort: 4446,
+          secretKey: "12345678901234567890123456789012",
+          udpAddress: "192.168.1.100",
+          testAddress: "8.8.8.8",
+          testPort: 53,
+          helloMessageSender: 60,
+          pingIntervalTime: 1
+        }
+      };
+
+      // Mock readPluginOptions: returns the full disk file
+      mockApp.readPluginOptions = jest.fn(() => JSON.parse(JSON.stringify(diskFile)));
+
+      // Mock savePluginOptions: simulates real SignalK shorthand property merge
+      mockApp.savePluginOptions = jest.fn((configuration, cb) => {
+        // This replicates: { ...getPluginOptions(plugin.id), configuration }
+        const existing = JSON.parse(JSON.stringify(diskFile));
+        diskFile = { ...existing, configuration };
+        cb(null);
+      });
+
+      mockRouter = {
+        get: jest.fn((path, ...handlers) => {
+          if (path === "/plugin-config") {
+            pluginConfigGetHandler = handlers[handlers.length - 1];
+            pluginConfigGetMiddlewares = handlers.slice(0, -1);
+          }
+        }),
+        post: jest.fn((path, ...handlers) => {
+          if (path === "/plugin-config") {
+            pluginConfigPostHandler = handlers[handlers.length - 1];
+            pluginConfigPostMiddlewares = handlers.slice(0, -1);
+          }
+        })
+      };
+
+      plugin.registerWithRouter(mockRouter);
+    });
+
+    function runWithMiddlewares(middlewares, handler, req, res) {
+      return new Promise((resolve) => {
+        let currentIndex = 0;
+        const next = () => {
+          currentIndex++;
+          if (currentIndex < middlewares.length) {
+            middlewares[currentIndex](req, res, next);
+          } else {
+            Promise.resolve(handler(req, res)).then(resolve);
+          }
+        };
+        if (middlewares.length > 0) {
+          middlewares[0](req, res, next);
+        } else {
+          Promise.resolve(handler(req, res)).then(resolve);
+        }
+        setTimeout(resolve, 50);
+      });
+    }
+
+    /** Simulates GET /plugin-config and returns the configuration object */
+    async function readConfig() {
+      let captured;
+      const mockRes = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn((data) => { captured = data; })
+      };
+      await runWithMiddlewares(
+        pluginConfigGetMiddlewares,
+        pluginConfigGetHandler,
+        {},
+        mockRes
+      );
+      return captured;
+    }
+
+    /** Simulates POST /plugin-config with the given body */
+    async function saveConfig(body) {
+      let captured;
+      const mockRes = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn((data) => { captured = data; })
+      };
+      await runWithMiddlewares(
+        pluginConfigPostMiddlewares,
+        pluginConfigPostHandler,
+        { headers: { "content-type": "application/json" }, body },
+        mockRes
+      );
+      return captured;
+    }
+
+    test("config should not grow after multiple save cycles", async () => {
+      const initialSize = JSON.stringify(diskFile).length;
+
+      // Round-trip 1: read → save unchanged
+      const read1 = await readConfig();
+      expect(read1.success).toBe(true);
+      await saveConfig(read1.configuration);
+
+      const sizeAfterRound1 = JSON.stringify(diskFile).length;
+      expect(sizeAfterRound1).toBe(initialSize);
+
+      // Round-trip 2: read → save unchanged
+      const read2 = await readConfig();
+      await saveConfig(read2.configuration);
+
+      const sizeAfterRound2 = JSON.stringify(diskFile).length;
+      expect(sizeAfterRound2).toBe(initialSize);
+
+      // Round-trip 3: read → save unchanged
+      const read3 = await readConfig();
+      await saveConfig(read3.configuration);
+
+      const sizeAfterRound3 = JSON.stringify(diskFile).length;
+      expect(sizeAfterRound3).toBe(initialSize);
+    });
+
+    test("config should never have nested configuration key", async () => {
+      // Save three times
+      for (let i = 0; i < 3; i++) {
+        const read = await readConfig();
+        await saveConfig(read.configuration);
+      }
+
+      // The disk file's configuration should contain actual config fields, not a nested "configuration" object
+      expect(diskFile.configuration.serverType).toBe("client");
+      expect(diskFile.configuration.udpPort).toBe(4446);
+      expect(diskFile.configuration.configuration).toBeUndefined();
+    });
+
+    test("config values should survive multiple read-modify-save cycles", async () => {
+      // Round-trip 1: read, modify port, save
+      const read1 = await readConfig();
+      read1.configuration.udpPort = 5000;
+      await saveConfig(read1.configuration);
+      expect(diskFile.configuration.udpPort).toBe(5000);
+
+      // Round-trip 2: read, modify address, save
+      const read2 = await readConfig();
+      expect(read2.configuration.udpPort).toBe(5000);
+      read2.configuration.udpAddress = "10.0.0.1";
+      await saveConfig(read2.configuration);
+      expect(diskFile.configuration.udpPort).toBe(5000);
+      expect(diskFile.configuration.udpAddress).toBe("10.0.0.1");
+
+      // Round-trip 3: read, verify all changes persisted
+      const read3 = await readConfig();
+      expect(read3.configuration.udpPort).toBe(5000);
+      expect(read3.configuration.udpAddress).toBe("10.0.0.1");
+      expect(read3.configuration.secretKey).toBe("12345678901234567890123456789012");
+    });
+
+    test("switching modes should not leave stale fields on disk", async () => {
+      // Start in client mode, save
+      const read1 = await readConfig();
+      expect(read1.configuration.serverType).toBe("client");
+      await saveConfig(read1.configuration);
+
+      // Switch to server mode — client fields should be stripped
+      const read2 = await readConfig();
+      read2.configuration.serverType = "server";
+      await saveConfig(read2.configuration);
+
+      expect(diskFile.configuration.serverType).toBe("server");
+      expect(diskFile.configuration.udpAddress).toBeUndefined();
+      expect(diskFile.configuration.testAddress).toBeUndefined();
+      expect(diskFile.configuration.testPort).toBeUndefined();
+      expect(diskFile.configuration.helloMessageSender).toBeUndefined();
+      expect(diskFile.configuration.pingIntervalTime).toBeUndefined();
+
+      // Switch back to client mode — add client fields back
+      const read3 = await readConfig();
+      read3.configuration.serverType = "client";
+      read3.configuration.udpAddress = "192.168.1.200";
+      read3.configuration.testAddress = "1.1.1.1";
+      read3.configuration.testPort = 443;
+      await saveConfig(read3.configuration);
+
+      expect(diskFile.configuration.serverType).toBe("client");
+      expect(diskFile.configuration.udpAddress).toBe("192.168.1.200");
+      expect(diskFile.configuration.configuration).toBeUndefined();
+    });
+
+    test("stale nested configuration from prior bug should be cleaned on save", async () => {
+      // Simulate a corrupted disk file left by the old double-nesting bug
+      diskFile = {
+        enabled: true,
+        configuration: {
+          configuration: {
+            serverType: "client",
+            udpPort: 4446,
+            secretKey: "12345678901234567890123456789012",
+            udpAddress: "192.168.1.100",
+            testAddress: "8.8.8.8",
+            testPort: 53
+          }
+        }
+      };
+
+      // Read returns the corrupted config
+      const read1 = await readConfig();
+      // The nested "configuration" key will be present in what we read
+      expect(read1.configuration.configuration).toBeDefined();
+
+      // User re-enters correct values and saves (simulating form fill after seeing defaults)
+      const fixedConfig = {
+        serverType: "client",
+        udpPort: 4446,
+        secretKey: "12345678901234567890123456789012",
+        udpAddress: "192.168.1.100",
+        testAddress: "8.8.8.8",
+        testPort: 53,
+        // Include the stale nested key that RJSF might preserve
+        configuration: { serverType: "client", udpPort: 4446 }
+      };
+      await saveConfig(fixedConfig);
+
+      // After save, sanitization should have stripped the nested "configuration" key
+      expect(diskFile.configuration.serverType).toBe("client");
+      expect(diskFile.configuration.udpPort).toBe(4446);
+      expect(diskFile.configuration.configuration).toBeUndefined();
+
+      // Subsequent round-trips should stay clean
+      const read2 = await readConfig();
+      await saveConfig(read2.configuration);
+      expect(diskFile.configuration.configuration).toBeUndefined();
+    });
+  });
+
   describe("Error Handling", () => {
     test("should handle missing required options gracefully", async () => {
       const options = {};
