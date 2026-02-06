@@ -66,6 +66,16 @@ module.exports = function createPlugin(app) {
   const SMART_BATCH_MIN_DELTAS = 1; // Always allow at least 1 delta per packet
   const SMART_BATCH_MAX_DELTAS = 50; // Cap to prevent excessive batching latency
 
+  /**
+   * Calculates max deltas per batch based on average bytes per delta
+   * @param {number} avgBytes - Average bytes per delta
+   * @returns {number} Clamped max deltas per batch
+   */
+  function calculateMaxDeltasPerBatch(avgBytes) {
+    const raw = Math.floor((MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN) / avgBytes);
+    return Math.max(SMART_BATCH_MIN_DELTAS, Math.min(SMART_BATCH_MAX_DELTAS, raw));
+  }
+
   const plugin = {};
   plugin.id = "signalk-data-connector";
   plugin.name = "Signal K Data Connector";
@@ -81,34 +91,25 @@ module.exports = function createPlugin(app) {
   let deltaTimer;
   let deltaTimerTime = DEFAULT_DELTA_TIMER;
   let deltas = [];
-  let deltasFixed = [];
   let timer = false;
   let pluginOptions; // Store options for access in event handlers
   let lastPacketTime = 0; // Track last packet send time for hello message suppression
 
   // Smart batching state - dynamically adjusts batch size to keep packets under MTU
   let avgBytesPerDelta = SMART_BATCH_INITIAL_ESTIMATE; // Rolling average of bytes per delta
-  let maxDeltasPerBatch = Math.floor(
-    (MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN) / SMART_BATCH_INITIAL_ESTIMATE
-  ); // Calculated limit
+  let maxDeltasPerBatch = calculateMaxDeltasPerBatch(SMART_BATCH_INITIAL_ESTIMATE);
 
   // Persistent storage file paths - initialized in plugin.start
   let deltaTimerFile;
   let subscriptionFile;
   let sentenceFilterFile;
 
-  // Debounce timers for configuration file changes
-  let deltaTimerDebounceTimer;
-  let subscriptionDebounceTimer;
-  let sentenceFilterDebounceTimer;
+  // Debounce timers and content hashes for configuration file changes
+  const configDebounceTimers = {};
+  const configContentHashes = {};
 
   // Track server mode status
   let isServerMode = false;
-
-  // Track last file content hashes to prevent duplicate processing
-  let lastDeltaTimerHash = null;
-  let lastSubscriptionHash = null;
-  let lastSentenceFilterHash = null;
 
   // Sentence filter - list of NMEA sentences to exclude (e.g., GSV, GSA)
   let excludedSentences = ["GSV"]; // Default: filter GSV (verbose satellite data)
@@ -156,9 +157,7 @@ module.exports = function createPlugin(app) {
       timerSends: 0, // Sends triggered by timer
       oversizedPackets: 0, // Packets that exceeded MTU despite prediction
       avgBytesPerDelta: SMART_BATCH_INITIAL_ESTIMATE,
-      maxDeltasPerBatch: Math.floor(
-        (MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN) / SMART_BATCH_INITIAL_ESTIMATE
-      )
+      maxDeltasPerBatch: calculateMaxDeltasPerBatch(SMART_BATCH_INITIAL_ESTIMATE)
     }
   };
 
@@ -213,6 +212,26 @@ module.exports = function createPlugin(app) {
       ]
     };
     app.handleMessage(plugin.id, rttDelta);
+  }
+
+  /**
+   * Records an error in metrics tracking
+   * @param {string} category - Error category ('compression', 'encryption', 'subscription', 'udpSend', 'general')
+   * @param {string} message - Error message
+   */
+  function recordError(category, message) {
+    const counterMap = {
+      compression: "compressionErrors",
+      encryption: "encryptionErrors",
+      subscription: "subscriptionErrors",
+      udpSend: "udpSendErrors"
+    };
+    const counter = counterMap[category];
+    if (counter) {
+      metrics[counter]++;
+    }
+    metrics.lastError = message;
+    metrics.lastErrorTime = Date.now();
   }
 
   /**
@@ -393,196 +412,150 @@ module.exports = function createPlugin(app) {
   };
 
   /**
-   * Handles delta timer configuration changes with debouncing
-   * Debouncing prevents multiple rapid file changes from triggering multiple updates
-   * @returns {void}
+   * Creates a debounced file change handler with content hash deduplication
+   * @param {string} name - Human-readable name for logging
+   * @param {Function} getFilePath - Returns the file path to read
+   * @param {Function} processConfig - Async callback receiving (parsedContent, rawContent)
+   * @param {Object} [options] - Options: { readFallback: value } for default when file is missing
+   * @returns {Function} Debounced change handler
    */
-  function handleDeltaTimerChange() {
-    clearTimeout(deltaTimerDebounceTimer);
-    deltaTimerDebounceTimer = setTimeout(async () => {
-      try {
-        const content = await readFile(deltaTimerFile, "utf-8");
-        const contentHash = crypto.createHash(CONTENT_HASH_ALGORITHM).update(content).digest("hex");
-
-        // Skip if content hasn't actually changed (prevents duplicate processing)
-        if (contentHash === lastDeltaTimerHash) {
-          app.debug("Delta timer file change detected but content unchanged, skipping");
-          return;
-        }
-        lastDeltaTimerHash = contentHash;
-
-        const deltaTimerConfig = JSON.parse(content);
-        if (deltaTimerConfig && deltaTimerConfig.deltaTimer) {
-          const newTimerValue = deltaTimerConfig.deltaTimer;
-
-          // Validate range (100-10000ms)
-          if (newTimerValue >= 100 && newTimerValue <= 10000) {
-            if (deltaTimerTime !== newTimerValue) {
-              deltaTimerTime = newTimerValue;
-              clearTimeout(deltaTimer);
-              scheduleDeltaTimer();
-              app.debug(`Delta timer updated to ${deltaTimerTime}ms`);
-            }
+  function createDebouncedConfigHandler(name, getFilePath, processConfig, options = {}) {
+    return function handleChange() {
+      clearTimeout(configDebounceTimers[name]);
+      configDebounceTimers[name] = setTimeout(async () => {
+        try {
+          let content;
+          if (options.readFallback !== undefined) {
+            content = await readFile(getFilePath(), "utf-8").catch(() => null);
           } else {
-            app.error(
-              `Invalid delta timer value: ${newTimerValue}. Must be between 100 and 10000ms`
-            );
+            content = await readFile(getFilePath(), "utf-8");
           }
+
+          // Compute hash from content (or fallback)
+          const hashSource = content || JSON.stringify(options.readFallback);
+          const contentHash = crypto.createHash(CONTENT_HASH_ALGORITHM).update(hashSource).digest("hex");
+
+          // Skip if content hasn't actually changed
+          if (contentHash === configContentHashes[name]) {
+            app.debug(`${name} file change detected but content unchanged, skipping`);
+            return;
+          }
+          configContentHashes[name] = contentHash;
+
+          const parsed = content ? JSON.parse(content) : options.readFallback;
+          await processConfig(parsed);
+        } catch (err) {
+          app.error(`Error handling ${name.toLowerCase()} change: ${err.message}`);
         }
-      } catch (err) {
-        app.error(`Error handling delta timer change: ${err.message}`);
-      }
-    }, FILE_WATCH_DEBOUNCE_DELAY);
+      }, FILE_WATCH_DEBOUNCE_DELAY);
+    };
   }
 
-  /**
-   * Handles subscription configuration changes with debouncing
-   * Resubscribes to SignalK data streams when subscription config changes
-   * @returns {void}
-   */
-  function handleSubscriptionChange() {
-    clearTimeout(subscriptionDebounceTimer);
-    subscriptionDebounceTimer = setTimeout(async () => {
-      try {
-        const content = await readFile(subscriptionFile, "utf-8").catch(() => null);
-
-        // If file doesn't exist, use defaults
-        const localSubscriptionNew = content
-          ? JSON.parse(content)
-          : {
-            context: "*",
-            subscribe: [{ path: "*" }]
-          };
-
-        // Use content hashing instead of JSON.stringify comparison
-        const configString = JSON.stringify(localSubscriptionNew);
-        const contentHash = crypto
-          .createHash(CONTENT_HASH_ALGORITHM)
-          .update(configString)
-          .digest("hex");
-
-        // Skip if content hasn't actually changed
-        if (contentHash === lastSubscriptionHash) {
-          app.debug("Subscription file change detected but content unchanged, skipping");
-          return;
+  // Delta timer change handler
+  const handleDeltaTimerChange = createDebouncedConfigHandler(
+    "Delta timer",
+    () => deltaTimerFile,
+    (config) => {
+      if (config && config.deltaTimer) {
+        const newTimerValue = config.deltaTimer;
+        if (newTimerValue >= 100 && newTimerValue <= 10000) {
+          if (deltaTimerTime !== newTimerValue) {
+            deltaTimerTime = newTimerValue;
+            clearTimeout(deltaTimer);
+            scheduleDeltaTimer();
+            app.debug(`Delta timer updated to ${deltaTimerTime}ms`);
+          }
+        } else {
+          app.error(`Invalid delta timer value: ${newTimerValue}. Must be between 100 and 10000ms`);
         }
-        lastSubscriptionHash = contentHash;
+      }
+    }
+  );
 
-        localSubscription = localSubscriptionNew;
-        app.debug("Subscription configuration updated");
-        app.debug(localSubscription);
+  // Subscription change handler
+  const handleSubscriptionChange = createDebouncedConfigHandler(
+    "Subscription",
+    () => subscriptionFile,
+    (config) => {
+      localSubscription = config;
+      app.debug("Subscription configuration updated");
+      app.debug(localSubscription);
 
-        // Unsubscribe from previous subscriptions
-        unsubscribes.forEach((f) => f());
-        unsubscribes = [];
+      // Unsubscribe from previous subscriptions
+      unsubscribes.forEach((f) => f());
+      unsubscribes = [];
 
-        // Subscribe to new configuration with error recovery
-        try {
-          app.subscriptionmanager.subscribe(
-            localSubscription,
-            unsubscribes,
-            (subscriptionError) => {
-              app.error("Subscription error: " + subscriptionError);
-              readyToSend = false; // Stop sending data if subscription fails
-              setStatus("Subscription error - data transmission paused");
-              metrics.subscriptionErrors++;
-              metrics.lastError = `Subscription error: ${subscriptionError}`;
-              metrics.lastErrorTime = Date.now();
-            },
-            (delta) => {
-              if (readyToSend) {
-                // Filter out excluded sentences (configurable via sentence_filter.json)
-                const sentence = delta?.updates?.[0]?.source?.sentence;
-                if (sentence && excludedSentences.includes(sentence)) {
-                  return; // Skip excluded sentences
-                }
+      // Subscribe to new configuration with error recovery
+      try {
+        app.subscriptionmanager.subscribe(
+          localSubscription,
+          unsubscribes,
+          (subscriptionError) => {
+            app.error("Subscription error: " + subscriptionError);
+            readyToSend = false;
+            setStatus("Subscription error - data transmission paused");
+            recordError("subscription", `Subscription error: ${subscriptionError}`);
+          },
+          (delta) => {
+            if (readyToSend) {
+              // Filter out excluded sentences (configurable via sentence_filter.json)
+              const sentence = delta?.updates?.[0]?.source?.sentence;
+              if (sentence && excludedSentences.includes(sentence)) {
+                return;
+              }
 
-                // Prevent memory leak by limiting buffer size
-                if (deltas.length >= MAX_DELTAS_BUFFER_SIZE) {
-                  app.error(`Delta buffer overflow (${deltas.length} items), clearing buffer`);
-                  deltas = [];
-                }
+              // Prevent memory leak by limiting buffer size
+              if (deltas.length >= MAX_DELTAS_BUFFER_SIZE) {
+                app.error(`Delta buffer overflow (${deltas.length} items), clearing buffer`);
+                deltas = [];
+              }
 
-                deltas.push(delta);
-                setImmediate(() => app.reportOutputMessages());
+              deltas.push(delta);
+              setImmediate(() => app.reportOutputMessages());
 
-                // Smart batching: send early if batch reaches predicted size limit
-                if (deltas.length >= maxDeltasPerBatch) {
-                  app.debug(
-                    `Smart batch: sending ${deltas.length} deltas (reached predicted limit of ${maxDeltasPerBatch})`
-                  );
-                  metrics.smartBatching.earlySends++;
-                  packCrypt(
-                    deltas,
-                    pluginOptions.secretKey,
-                    pluginOptions.udpAddress,
-                    pluginOptions.udpPort
-                  );
-                  deltas = [];
-                  timer = false;
-                } else if (timer) {
-                  // Timer-based send (normal path)
-                  metrics.smartBatching.timerSends++;
-                  packCrypt(
-                    deltas,
-                    pluginOptions.secretKey,
-                    pluginOptions.udpAddress,
-                    pluginOptions.udpPort
-                  );
-                  app.debug(JSON.stringify(deltas, null, 2));
-                  deltas = [];
-                  timer = false;
-                }
+              // Smart batching: send early if batch reaches predicted size limit
+              if (deltas.length >= maxDeltasPerBatch) {
+                app.debug(
+                  `Smart batch: sending ${deltas.length} deltas (reached predicted limit of ${maxDeltasPerBatch})`
+                );
+                metrics.smartBatching.earlySends++;
+                packCrypt(deltas, pluginOptions.secretKey, pluginOptions.udpAddress, pluginOptions.udpPort);
+                deltas = [];
+                timer = false;
+              } else if (timer) {
+                metrics.smartBatching.timerSends++;
+                packCrypt(deltas, pluginOptions.secretKey, pluginOptions.udpAddress, pluginOptions.udpPort);
+                deltas = [];
+                timer = false;
               }
             }
-          );
-        } catch (subscribeError) {
-          app.error(`Failed to subscribe: ${subscribeError.message}`);
-          readyToSend = false;
-          setStatus("Failed to subscribe - data transmission paused");
-          metrics.subscriptionErrors++;
-          metrics.lastError = `Failed to subscribe: ${subscribeError.message}`;
-          metrics.lastErrorTime = Date.now();
-        }
-      } catch (err) {
-        app.error(`Error handling subscription change: ${err.message}`);
+          }
+        );
+      } catch (subscribeError) {
+        app.error(`Failed to subscribe: ${subscribeError.message}`);
+        readyToSend = false;
+        setStatus("Failed to subscribe - data transmission paused");
+        recordError("subscription", `Failed to subscribe: ${subscribeError.message}`);
       }
-    }, FILE_WATCH_DEBOUNCE_DELAY);
-  }
+    },
+    { readFallback: { context: "*", subscribe: [{ path: "*" }] } }
+  );
 
-  /**
-   * Handles sentence filter configuration changes with debouncing
-   * @returns {void}
-   */
-  function handleSentenceFilterChange() {
-    clearTimeout(sentenceFilterDebounceTimer);
-    sentenceFilterDebounceTimer = setTimeout(async () => {
-      try {
-        const content = await readFile(sentenceFilterFile, "utf-8");
-        const contentHash = crypto.createHash(CONTENT_HASH_ALGORITHM).update(content).digest("hex");
-
-        // Skip if content hasn't actually changed
-        if (contentHash === lastSentenceFilterHash) {
-          app.debug("Sentence filter file change detected but content unchanged, skipping");
-          return;
-        }
-        lastSentenceFilterHash = contentHash;
-
-        const filterConfig = JSON.parse(content);
-        if (filterConfig && Array.isArray(filterConfig.excludedSentences)) {
-          // Validate and normalize sentence names (uppercase, trimmed)
-          excludedSentences = filterConfig.excludedSentences
-            .map((s) => String(s).trim().toUpperCase())
-            .filter((s) => s.length > 0);
-          app.debug(`Sentence filter updated: excluding [${excludedSentences.join(", ")}]`);
-        } else {
-          app.error("Invalid sentence filter configuration: excludedSentences must be an array");
-        }
-      } catch (err) {
-        app.error(`Error handling sentence filter change: ${err.message}`);
+  // Sentence filter change handler
+  const handleSentenceFilterChange = createDebouncedConfigHandler(
+    "Sentence filter",
+    () => sentenceFilterFile,
+    (config) => {
+      if (config && Array.isArray(config.excludedSentences)) {
+        excludedSentences = config.excludedSentences
+          .map((s) => String(s).trim().toUpperCase())
+          .filter((s) => s.length > 0);
+        app.debug(`Sentence filter updated: excluding [${excludedSentences.join(", ")}]`);
+      } else {
+        app.error("Invalid sentence filter configuration: excludedSentences must be an array");
       }
-    }, FILE_WATCH_DEBOUNCE_DELAY);
-  }
+    }
+  );
 
   // Watcher recovery delay in milliseconds
   const WATCHER_RECOVERY_DELAY = 5000;
@@ -645,9 +618,7 @@ module.exports = function createPlugin(app) {
   }
 
   // Store watcher objects for cleanup
-  let deltaTimerWatcherObj = null;
-  let subscriptionWatcherObj = null;
-  let sentenceFilterWatcherObj = null;
+  let configWatcherObjects = [];
 
   /**
    * Sets up file system watchers for configuration files
@@ -656,25 +627,14 @@ module.exports = function createPlugin(app) {
    */
   function setupConfigWatchers() {
     try {
-      // Watch delta_timer.json for changes
-      deltaTimerWatcherObj = createWatcherWithRecovery(
-        deltaTimerFile,
-        handleDeltaTimerChange,
-        "Delta timer"
-      );
+      const watcherConfigs = [
+        { path: deltaTimerFile, handler: handleDeltaTimerChange, name: "Delta timer" },
+        { path: subscriptionFile, handler: handleSubscriptionChange, name: "Subscription" },
+        { path: sentenceFilterFile, handler: handleSentenceFilterChange, name: "Sentence filter" }
+      ];
 
-      // Watch subscription.json for changes
-      subscriptionWatcherObj = createWatcherWithRecovery(
-        subscriptionFile,
-        handleSubscriptionChange,
-        "Subscription"
-      );
-
-      // Watch sentence_filter.json for changes
-      sentenceFilterWatcherObj = createWatcherWithRecovery(
-        sentenceFilterFile,
-        handleSentenceFilterChange,
-        "Sentence filter"
+      configWatcherObjects = watcherConfigs.map(({ path, handler, name }) =>
+        createWatcherWithRecovery(path, handler, name)
       );
 
       // Load initial subscription configuration
@@ -818,6 +778,17 @@ module.exports = function createPlugin(app) {
   // Register web routes - needs to be defined before start() is called
   plugin.registerWithRouter = (router) => {
     /**
+     * Content-Type validation middleware for JSON POST endpoints
+     */
+    const requireJson = (req, res, next) => {
+      const contentType = req.headers["content-type"];
+      if (!contentType || !contentType.includes("application/json")) {
+        return res.status(415).json({ error: "Content-Type must be application/json" });
+      }
+      next();
+    };
+
+    /**
      * Rate limiting middleware for API endpoints
      */
     const rateLimitMiddleware = (req, res, next) => {
@@ -951,13 +922,7 @@ module.exports = function createPlugin(app) {
     });
 
     // Plugin configuration endpoint - save config
-    router.post("/plugin-config", rateLimitMiddleware, async (req, res) => {
-      // Validate Content-Type
-      const contentType = req.headers["content-type"];
-      if (!contentType || !contentType.includes("application/json")) {
-        return res.status(415).json({ success: false, error: "Content-Type must be application/json" });
-      }
-
+    router.post("/plugin-config", rateLimitMiddleware, requireJson, (req, res) => {
       try {
         const newConfig = req.body;
 
@@ -1037,13 +1002,7 @@ module.exports = function createPlugin(app) {
       res.send(JSON.stringify(config || {}));
     });
 
-    router.post("/config/:filename", rateLimitMiddleware, clientModeMiddleware, async (req, res) => {
-      // Validate Content-Type
-      const contentType = req.headers["content-type"];
-      if (!contentType || !contentType.includes("application/json")) {
-        return res.status(415).json({ error: "Content-Type must be application/json" });
-      }
-
+    router.post("/config/:filename", rateLimitMiddleware, requireJson, clientModeMiddleware, async (req, res) => {
       const filePath = getConfigFilePath(req.params.filename);
       if (!filePath) {
         return res.status(400).json({ error: "Invalid filename" });
@@ -1149,10 +1108,7 @@ module.exports = function createPlugin(app) {
             ]
           };
           app.debug("Sending hello message (no recent data transmission)");
-          app.debug(JSON.stringify(fixedDelta, null, 2));
-          deltasFixed.push(fixedDelta);
-          await packCrypt(deltasFixed, options.secretKey, options.udpAddress, options.udpPort);
-          deltasFixed = [];
+          await packCrypt([fixedDelta], options.secretKey, options.udpAddress, options.udpPort);
         } else {
           app.debug(`Skipping hello message (last packet ${timeSinceLastPacket}ms ago)`);
         }
@@ -1318,12 +1274,7 @@ module.exports = function createPlugin(app) {
         (1 - SMART_BATCH_SMOOTHING) * avgBytesPerDelta + SMART_BATCH_SMOOTHING * bytesPerDelta;
 
       // Recalculate max deltas for next batch based on updated average
-      const targetSize = MAX_SAFE_UDP_PAYLOAD * SMART_BATCH_SAFETY_MARGIN;
-      maxDeltasPerBatch = Math.floor(targetSize / avgBytesPerDelta);
-      maxDeltasPerBatch = Math.max(
-        SMART_BATCH_MIN_DELTAS,
-        Math.min(SMART_BATCH_MAX_DELTAS, maxDeltasPerBatch)
-      );
+      maxDeltasPerBatch = calculateMaxDeltasPerBatch(avgBytesPerDelta);
 
       // Update metrics for monitoring
       metrics.smartBatching.avgBytesPerDelta = Math.round(avgBytesPerDelta);
@@ -1337,19 +1288,17 @@ module.exports = function createPlugin(app) {
       // Update last packet time for hello message suppression
       lastPacketTime = Date.now();
     } catch (error) {
-      if (error.message && error.message.includes("compress")) {
-        app.error(`Compression error: ${error.message}`);
-        metrics.compressionErrors++;
-        metrics.lastError = `Compression error: ${error.message}`;
-      } else if (error.message && error.message.includes("encrypt")) {
-        app.error(`Encryption error: ${error.message}`);
-        metrics.encryptionErrors++;
-        metrics.lastError = `Encryption error: ${error.message}`;
+      const msg = error.message || "";
+      if (msg.includes("compress")) {
+        app.error(`Compression error: ${msg}`);
+        recordError("compression", `Compression error: ${msg}`);
+      } else if (msg.includes("encrypt")) {
+        app.error(`Encryption error: ${msg}`);
+        recordError("encryption", `Encryption error: ${msg}`);
       } else {
-        app.error(`packCrypt error: ${error.message}`);
-        metrics.lastError = `packCrypt error: ${error.message}`;
+        app.error(`packCrypt error: ${msg}`);
+        recordError("general", `packCrypt error: ${msg}`);
       }
-      metrics.lastErrorTime = Date.now();
     }
   }
 
@@ -1438,26 +1387,20 @@ module.exports = function createPlugin(app) {
         metrics.deltasReceived++;
       }
     } catch (error) {
-      if (
-        error.message &&
-        (error.message.includes("Unsupported state") || error.message.includes("auth"))
-      ) {
+      const msg = error.message || "";
+      if (msg.includes("Unsupported state") || msg.includes("auth")) {
         app.error("Authentication failed: packet tampered or wrong key");
-        metrics.encryptionErrors++;
-        metrics.lastError = "Authentication failed: packet tampered or wrong key";
-      } else if (error.message && error.message.includes("decrypt")) {
-        app.error(`Decryption error: ${error.message}`);
-        metrics.encryptionErrors++;
-        metrics.lastError = `Decryption error: ${error.message}`;
-      } else if (error.message && error.message.includes("decompress")) {
-        app.error(`Decompression error: ${error.message}`);
-        metrics.compressionErrors++;
-        metrics.lastError = `Decompression error: ${error.message}`;
+        recordError("encryption", "Authentication failed: packet tampered or wrong key");
+      } else if (msg.includes("decrypt")) {
+        app.error(`Decryption error: ${msg}`);
+        recordError("encryption", `Decryption error: ${msg}`);
+      } else if (msg.includes("decompress")) {
+        app.error(`Decompression error: ${msg}`);
+        recordError("compression", `Decompression error: ${msg}`);
       } else {
-        app.error(`unpackDecrypt error: ${error.message}`);
-        metrics.lastError = `unpackDecrypt error: ${error.message}`;
+        app.error(`unpackDecrypt error: ${msg}`);
+        recordError("general", `unpackDecrypt error: ${msg}`);
       }
-      metrics.lastErrorTime = Date.now();
     }
   }
 
@@ -1496,8 +1439,7 @@ module.exports = function createPlugin(app) {
           } else {
             // Log error and give up
             app.error(`UDP send error to ${host}:${port} - ${error.message} (code: ${error.code})`);
-            metrics.lastError = `UDP send error: ${error.message} (${error.code})`;
-            metrics.lastErrorTime = Date.now();
+            recordError("udpSend", `UDP send error: ${error.message} (${error.code})`);
             if (retryCount >= UDP_RETRY_MAX) {
               app.error("Max retries reached, packet dropped");
             }
@@ -1521,9 +1463,7 @@ module.exports = function createPlugin(app) {
     isServerMode = false;
     readyToSend = false;
     deltas = [];
-    lastDeltaTimerHash = null;
-    lastSubscriptionHash = null;
-    lastSentenceFilterHash = null;
+    Object.keys(configContentHashes).forEach((k) => delete configContentHashes[k]);
     excludedSentences = ["GSV"];
     lastPacketTime = 0;
 
@@ -1538,26 +1478,15 @@ module.exports = function createPlugin(app) {
     clearInterval(rateLimitCleanupInterval);
     clearTimeout(pingTimeout);
     clearTimeout(deltaTimer);
-    clearTimeout(deltaTimerDebounceTimer);
-    clearTimeout(subscriptionDebounceTimer);
-    clearTimeout(sentenceFilterDebounceTimer);
+    Object.keys(configDebounceTimers).forEach((k) => {
+      clearTimeout(configDebounceTimers[k]);
+      delete configDebounceTimers[k];
+    });
 
     // Stop file system watchers
-    if (deltaTimerWatcherObj) {
-      deltaTimerWatcherObj.close();
-      deltaTimerWatcherObj = null;
-      app.debug("Delta timer file watcher closed");
-    }
-    if (subscriptionWatcherObj) {
-      subscriptionWatcherObj.close();
-      subscriptionWatcherObj = null;
-      app.debug("Subscription file watcher closed");
-    }
-    if (sentenceFilterWatcherObj) {
-      sentenceFilterWatcherObj.close();
-      sentenceFilterWatcherObj = null;
-      app.debug("Sentence filter file watcher closed");
-    }
+    configWatcherObjects.forEach((w) => w.close());
+    configWatcherObjects = [];
+    app.debug("Configuration file watchers closed");
 
     // Stop ping monitor
     if (pingMonitor) {
@@ -1573,7 +1502,7 @@ module.exports = function createPlugin(app) {
     }
   };
 
-// Schema using RJSF dependencies with oneOf for conditional field visibility
+  // Schema using RJSF dependencies with oneOf for conditional field visibility
   // Client-only fields appear ONLY when serverType is "client"
   // Based on: https://rjsf-team.github.io/react-jsonschema-form/docs/json-schema/dependencies/
   plugin.schema = {
