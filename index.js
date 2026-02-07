@@ -24,8 +24,8 @@ const {
 
 module.exports = function createPlugin(app) {
   const plugin = {};
-  plugin.id = "signalk-data-connector";
-  plugin.name = "Signal K Data Connector";
+  plugin.id = "signalk-edge-link";
+  plugin.name = "Signal K Edge Link";
   plugin.description =
     "Server & client solution for encrypted compressed UDP data transfer between Signal K units";
 
@@ -543,7 +543,7 @@ module.exports = function createPlugin(app) {
   // Based on: https://rjsf-team.github.io/react-jsonschema-form/docs/json-schema/dependencies/
   plugin.schema = {
     type: "object",
-    title: "SignalK Data Connector",
+    title: "SignalK Edge Link",
     description: "Configure encrypted UDP data transmission between SignalK units",
     required: ["serverType", "udpPort", "secretKey"],
     properties: {

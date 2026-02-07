@@ -1,5 +1,5 @@
 {
-  "name": "signalk-data-connector",
+  "name": "signalk-edge-link",
   "version": "1.0.0-beta.100",
   "description": "SignalK plugin for encrypted UDP data transmission with webapp configuration",
   "main": "index.js",
@@ -12,7 +12,7 @@
   ],
   "signalk": {
     "appIcon": "./icons/icon-72x72.png",
-    "displayName": "Data Connector Configuration"
+    "displayName": "Edge Link Configuration"
   },
   "signalk-plugin-enabled-by-default": false,
   "scripts": {
@@ -51,7 +51,7 @@
     "webpack-cli": "^5.1.4"
   },
   "author": "Karl-Erik Gustafsson",
-  "repository": "https://github.com/KEGustafsson/signalk-data-connector",
+  "repository": "https://github.com/KEGustafsson/signalk-edge-link",
   "license": "MIT",
   "jest": {
     "testEnvironment": "node",

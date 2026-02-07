@@ -1,14 +1,14 @@
-# Signal K Data Connector
+# Signal K Edge Link
 
 Secure, encrypted UDP data transmission between Signal K servers with advanced bandwidth optimization.
 
-[![Tests](https://img.shields.io/badge/tests-209%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-data-connector)
+[![Tests](https://img.shields.io/badge/tests-209%20passed-brightgreen)](https://github.com/KEGustafsson/signalk-edge-link)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen)](https://nodejs.org/)
 
-![Data Connector Concept](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/dataconnectorconcept.jpg)
+![Data Connector Concept](https://raw.githubusercontent.com/KEGustafsson/signalk-edge-link/refs/heads/main/doc/dataconnectorconcept.jpg)
 
-**Create a digital twin of your vessel in the cloud.** Signal K Data Connector sends vessel data from an onboard Signal K server to a remote cloud server using UDP — designed for challenging network conditions where TCP struggles, such as cellular network edge areas with intermittent connectivity. Data is queued and transmitted when the network allows, keeping latency low and bandwidth usage minimal. All traffic is encrypted and outbound-only, requiring no open inbound ports on the vessel. Simple to configure, efficient to run.
+**Create a digital twin of your vessel in the cloud.** Signal K Edge Link sends vessel data from an onboard Signal K server to a remote cloud server using UDP — designed for challenging network conditions where TCP struggles, such as cellular network edge areas with intermittent connectivity. Data is queued and transmitted when the network allows, keeping latency low and bandwidth usage minimal. All traffic is encrypted and outbound-only, requiring no open inbound ports on the vessel. Simple to configure, efficient to run.
 
 ---
 
@@ -46,7 +46,7 @@ Secure, encrypted UDP data transmission between Signal K servers with advanced b
 
 ## Overview
 
-Signal K Data Connector is a Signal K Node Server plugin that enables real-time data sharing between vessels or shore stations over UDP. It combines AES-256-GCM authenticated encryption with Brotli compression to deliver secure, bandwidth-efficient transmission — achieving up to **97% bandwidth reduction** compared to raw data.
+Signal K Edge Link is a Signal K Node Server plugin that enables real-time data sharing between vessels or shore stations over UDP. It combines AES-256-GCM authenticated encryption with Brotli compression to deliver secure, bandwidth-efficient transmission — achieving up to **97% bandwidth reduction** compared to raw data.
 
 **Key capabilities:**
 
@@ -71,8 +71,8 @@ Signal K Data Connector is a Signal K Node Server plugin that enables real-time 
 
 ```bash
 cd ~/.signalk/node_modules/
-git clone https://github.com/KEGustafsson/signalk-data-connector.git
-cd signalk-data-connector
+git clone https://github.com/KEGustafsson/signalk-edge-link.git
+cd signalk-edge-link
 npm install
 npm run build
 ```
@@ -81,7 +81,7 @@ Restart your Signal K server after installation.
 
 ### Quick Start
 
-1. Open **Admin UI → Plugin Config → Signal K Data Connector**
+1. Open **Admin UI → Plugin Config → Signal K Edge Link**
 2. Choose an operation mode:
    - **Server** — receives data from remote clients
    - **Client** — sends data to a remote server
@@ -98,7 +98,7 @@ Restart your Signal K server after installation.
 
 The plugin provides a custom React-based configuration UI that dynamically adapts to the selected operation mode, showing only relevant settings.
 
-**Access:** Admin UI → Plugin Config → Signal K Data Connector
+**Access:** Admin UI → Plugin Config → Signal K Edge Link
 
 ### Server Mode (Receiver)
 
@@ -132,7 +132,7 @@ Additional client settings are available in the web dashboard:
 
 ### Web Dashboard
 
-**Access:** `http://[signalk-server]:3000/plugins/signalk-data-connector`
+**Access:** `http://[signalk-server]:3000/plugins/signalk-edge-link`
 
 The dashboard provides real-time monitoring and configuration controls.
 
@@ -168,13 +168,13 @@ All endpoints are rate-limited to 20 requests per minute per IP.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/plugins/signalk-data-connector/config/:filename` | Read a configuration file |
-| POST | `/plugins/signalk-data-connector/config/:filename` | Update a configuration file |
-| GET | `/plugins/signalk-data-connector/metrics` | Real-time statistics and performance data |
-| GET | `/plugins/signalk-data-connector/paths` | Path dictionary information |
-| GET | `/plugins/signalk-data-connector/plugin-config` | Current plugin configuration |
-| POST | `/plugins/signalk-data-connector/plugin-config` | Update plugin configuration |
-| GET | `/plugins/signalk-data-connector/plugin-schema` | Plugin schema definition |
+| GET | `/plugins/signalk-edge-link/config/:filename` | Read a configuration file |
+| POST | `/plugins/signalk-edge-link/config/:filename` | Update a configuration file |
+| GET | `/plugins/signalk-edge-link/metrics` | Real-time statistics and performance data |
+| GET | `/plugins/signalk-edge-link/paths` | Path dictionary information |
+| GET | `/plugins/signalk-edge-link/plugin-config` | Current plugin configuration |
+| POST | `/plugins/signalk-edge-link/plugin-config` | Update plugin configuration |
+| GET | `/plugins/signalk-edge-link/plugin-schema` | Plugin schema definition |
 
 ---
 
@@ -201,7 +201,7 @@ In client mode, the plugin measures **Round Trip Time (RTT)** using TCP ping to 
 
 ### Bandwidth Comparison
 
-![Data Rate Comparison](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/datarate.jpg)
+![Data Rate Comparison](https://raw.githubusercontent.com/KEGustafsson/signalk-edge-link/refs/heads/main/doc/datarate.jpg)
 
 | Mode | Bandwidth | Reduction vs. WebSocket |
 |------|-----------|------------------------|
@@ -306,7 +306,7 @@ MySecretKey123                     # Too short
 
 - Verify `npm install` completed successfully
 - Check Signal K server logs for errors
-- Ensure plugin directory is `~/.signalk/node_modules/signalk-data-connector`
+- Ensure plugin directory is `~/.signalk/node_modules/signalk-edge-link`
 - Verify Node.js version ≥ 14.0.0
 
 ### Web UI Not Accessible
@@ -389,7 +389,7 @@ Modules are wired together via factory functions that receive a shared `state` o
 ### Project Structure
 
 ```
-signalk-data-connector/
+signalk-edge-link/
 ├── index.js                    # Plugin entry, state, watchers, lifecycle
 ├── lib/
 │   ├── CircularBuffer.js       # Fixed-size circular buffer

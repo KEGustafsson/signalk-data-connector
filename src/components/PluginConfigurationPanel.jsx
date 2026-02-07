@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import Form from "@rjsf/core";
 import validator from "@rjsf/validator-ajv8";
 
-const API_BASE = "/plugins/signalk-data-connector";
+const API_BASE = "/plugins/signalk-edge-link";
 
 // Base schema properties shared between server and client modes
 const baseProperties = {
@@ -95,7 +95,7 @@ function getSchema(isClientMode) {
 
   return {
     type: "object",
-    title: "SignalK Data Connector",
+    title: "SignalK Edge Link",
     description: "Configure encrypted UDP data transmission between SignalK units",
     required,
     properties
@@ -217,7 +217,7 @@ function PluginConfigurationPanel(props) {
   }
 
   return (
-    <div className="signalk-data-connector-config">
+    <div className="signalk-edge-link-config">
       {saveStatus && (
         <div
           style={{
@@ -262,35 +262,35 @@ function PluginConfigurationPanel(props) {
         </button>
       </Form>
       <style>{`
-        .signalk-data-connector-config {
+        .signalk-edge-link-config {
           width: 100%;
         }
-        .signalk-data-connector-config .form-group {
+        .signalk-edge-link-config .form-group {
           margin-bottom: 1rem;
         }
-        .signalk-data-connector-config label {
+        .signalk-edge-link-config label {
           font-weight: 600;
           margin-bottom: 0.25rem;
           display: block;
         }
-        .signalk-data-connector-config .help-block,
-        .signalk-data-connector-config .field-description {
+        .signalk-edge-link-config .help-block,
+        .signalk-edge-link-config .field-description {
           font-size: 0.85rem;
           color: #666;
           margin-top: 0.25rem;
         }
-        .signalk-data-connector-config input,
-        .signalk-data-connector-config select {
+        .signalk-edge-link-config input,
+        .signalk-edge-link-config select {
           width: 100%;
           padding: 0.5rem;
           border: 1px solid #ccc;
           border-radius: 4px;
           font-size: 1rem;
         }
-        .signalk-data-connector-config input[type="checkbox"] {
+        .signalk-edge-link-config input[type="checkbox"] {
           width: auto;
         }
-        .signalk-data-connector-config .btn-primary {
+        .signalk-edge-link-config .btn-primary {
           background-color: #007bff;
           border-color: #007bff;
           color: white;
@@ -300,11 +300,11 @@ function PluginConfigurationPanel(props) {
           font-size: 1rem;
           margin-top: 1rem;
         }
-        .signalk-data-connector-config .btn-primary:hover {
+        .signalk-edge-link-config .btn-primary:hover {
           background-color: #0069d9;
           border-color: #0062cc;
         }
-        .signalk-data-connector-config .text-danger {
+        .signalk-edge-link-config .text-danger {
           color: #dc3545;
           font-size: 0.85rem;
         }

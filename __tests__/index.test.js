@@ -38,11 +38,11 @@ describe("SignalK Data Connector Plugin", () => {
 
   describe("Plugin Metadata", () => {
     test("should have correct plugin id", () => {
-      expect(plugin.id).toBe("signalk-data-connector");
+      expect(plugin.id).toBe("signalk-edge-link");
     });
 
     test("should have plugin name", () => {
-      expect(plugin.name).toBe("Signal K Data Connector");
+      expect(plugin.name).toBe("Signal K Edge Link");
     });
 
     test("should have description", () => {
@@ -379,7 +379,7 @@ describe("SignalK Data Connector Plugin", () => {
 
       if (rttCalls.length > 0) {
         // First argument should be plugin.id
-        expect(rttCalls[0][0]).toBe("signalk-data-connector");
+        expect(rttCalls[0][0]).toBe("signalk-edge-link");
       }
     });
   });

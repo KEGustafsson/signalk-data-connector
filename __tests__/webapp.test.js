@@ -241,7 +241,7 @@ describe("Web UI Helper Functions", () => {
 
 describe("Web UI Constants", () => {
   // Constants from index.js
-  const API_BASE_PATH = "/plugins/signalk-data-connector";
+  const API_BASE_PATH = "/plugins/signalk-edge-link";
   const DELTA_TIMER_MIN = 100;
   const DELTA_TIMER_MAX = 10000;
   const NOTIFICATION_TIMEOUT = 4000;
@@ -249,7 +249,7 @@ describe("Web UI Constants", () => {
   const JSON_SYNC_DEBOUNCE = 300;
 
   test("API_BASE_PATH should be correct", () => {
-    expect(API_BASE_PATH).toBe("/plugins/signalk-data-connector");
+    expect(API_BASE_PATH).toBe("/plugins/signalk-edge-link");
   });
 
   test("DELTA_TIMER range should be valid", () => {

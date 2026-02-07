@@ -1,7 +1,7 @@
 import "./styles.css";
 
 // Constants
-const API_BASE_PATH = "/plugins/signalk-data-connector";
+const API_BASE_PATH = "/plugins/signalk-edge-link";
 const DELTA_TIMER_MIN = 100;
 const DELTA_TIMER_MAX = 10000;
 const NOTIFICATION_TIMEOUT = 4000;
