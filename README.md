@@ -8,6 +8,8 @@ Secure, encrypted UDP data transmission between Signal K servers with advanced b
 
 ![Data Connector Concept](https://raw.githubusercontent.com/KEGustafsson/signalk-data-connector/refs/heads/main/doc/dataconnectorconcept.jpg)
 
+**Create a digital twin of your vessel in the cloud.** Signal K Data Connector sends vessel data from an onboard Signal K server to a remote cloud server using UDP — designed for challenging network conditions where TCP struggles, such as cellular network edge areas with intermittent connectivity. Data is queued and transmitted when the network allows, keeping latency low and bandwidth usage minimal. All traffic is encrypted and outbound-only, requiring no open inbound ports on the vessel. Simple to configure, efficient to run.
+
 ---
 
 ## Table of Contents
